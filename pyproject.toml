@@ -1,0 +1,22 @@
+[project]
+name = "shot-director"
+version = "0.1.0"
+description = "Open-source mini Cinema Studio: start frame + camera preset -> AI video shot -> stitched sequence, via Comfy Router."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+shot-director = "shot_director.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shot_director"]

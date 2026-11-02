@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shot Director</title>
+<style>
+  :root { --bg:#0b0d12; --panel:#141821; --line:#262c3a; --text:#e6e9ef; --dim:#8a93a6; --accent:#ffb84d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; letter-spacing:.5px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .badge.mock { color:#ffd27a; border-color:#6b5420; }
+  .badge.live { color:#7ee2a8; border-color:#1f6b42; }
+  main { display:grid; grid-template-columns: 380px 1fr; gap:18px; padding:18px 22px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
+  label { display:block; font-size:13px; color:var(--dim); margin:8px 0 4px; }
+  select, input[type=text], textarea { width:100%; background:#0d1017; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  textarea { resize:vertical; min-height:56px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .chip { border:1px solid var(--line); border-radius:8px; padding:7px 8px; cursor:pointer; font-size:13px; background:#0d1017; color:var(--text); text-align:left; }
+  .chip.on { border-color:var(--accent); color:var(--accent); }
+  button.primary { width:100%; margin-top:12px; padding:11px; border:0; border-radius:9px; background:var(--accent); color:#1a1205; font-weight:700; cursor:pointer; font-size:15px; }
+  button.ghost { padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--text); cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .frame img { width:100%; border-radius:8px; margin-top:8px; display:block; }
+  .fragment { font-size:12px; color:var(--dim); margin-top:6px; min-height:2.6em; }
+  .shots { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; }
+  .slot { border:1px dashed var(--line); border-radius:10px; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; color:var(--dim); padding:6px; }
+  .slot video { width:100%; border-radius:8px; }
+  .slot .meta { font-size:12px; margin-top:4px; text-align:center; }
+  #sequence video { width:100%; max-height:52vh; border-radius:10px; background:#000; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  #status { font-size:13px; color:var(--dim); min-height:1.4em; }
+  #status.err { color:#ff8a8a; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Shot Director</h1>
+  <span id="mode" class="badge">...</span>
+  <span class="badge" id="models"></span>
+  <span style="flex:1"></span>
+  <span id="status"></span>
+</header>
+<main>
+  <div>
+    <section class="frame">
+      <h2>1. Start frame</h2>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
+      <label>or generate one with FLUX 3</label>
+      <div class="row" style="margin-top:0">
+        <input type="text" id="framePrompt" placeholder="a lone astronaut on a neon rooftop at night">
+        <button class="ghost" id="genFrame">Generate</button>
+      </div>
+      <img id="framePreview" alt="" hidden>
+    </section>
+    <section>
+      <h2>2. Camera body</h2>
+      <div class="grid" id="bodies"></div>
+      <div class="fragment" id="bodyFrag"></div>
+    </section>
+    <section>
+      <h2>3. Camera move</h2>
+      <div class="grid" id="moves"></div>
+      <div class="fragment" id="moveFrag"></div>
+      <label for="scene">Scene (optional)</label>
+      <textarea id="scene" placeholder="the astronaut turns toward the city lights"></textarea>
+      <button class="primary" id="shoot">Generate shot</button>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Shot queue (<span id="count">0</span>/3)</h2>
+      <div class="shots" id="slots"></div>
+      <div class="row">
+        <button class="primary" id="stitch" style="margin-top:0">Stitch sequence</button>
+        <button class="ghost" id="clear">Clear</button>
+      </div>
+    </section>
+    <section id="sequence">
+      <h2>Sequence</h2>
+      <div id="seqBody" style="color:var(--dim)">Generate up to 3 shots, then stitch them into one clip.</div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { body: "35mm", move: "dolly_in", frame: null, presets: null, max: 3 };
+
+function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+
+function chips(el, items, key, fragEl) {
+  el.innerHTML = "";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.className = "chip" + (state[key] === it.id ? " on" : "");
+    b.textContent = it.label;
+    b.onclick = () => { state[key] = it.id; chips(el, items, key, fragEl); };
+    el.appendChild(b);
+    if (state[key] === it.id) fragEl.textContent = it.fragment;
+  }
+}
+
+function renderQueue(shots) {
+  $("count").textContent = shots.length;
+  $("slots").innerHTML = "";
+  for (let i = 0; i < state.max; i++) {
+    const s = shots[i], d = document.createElement("div");
+    d.className = "slot";
+    if (s) {
+      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}</div>`;
+      d.title = s.prompt;
+    } else {
+      d.textContent = `Shot ${i + 1}`;
+    }
+    $("slots").appendChild(d);
+  }
+}
+
+async function busy(btn, label, fn) {
+  btn.disabled = true; status(label);
+  try { await fn(); } catch (e) { status(e.message, true); return; } finally { btn.disabled = false; }
+  status("");
+}
+
+function setFrame(j) { state.frame = j.frame; $("framePreview").src = j.url; $("framePreview").hidden = false; }
+
+$("file").onchange = () => busy($("file"), "Uploading frame...", async () => {
+  const fd = new FormData(); fd.append("file", $("file").files[0]);
+  setFrame(await api("/api/frame", { method: "POST", body: fd }));
+});
+
+$("genFrame").onclick = () => busy($("genFrame"), "Generating start frame...", async () => {
+  const prompt = $("framePrompt").value || "a cinematic scene";
+  setFrame(await api("/api/frame/generate", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, body: state.body }) }));
+});
+
+$("shoot").onclick = () => busy($("shoot"), "Generating shot (live mode can take a minute)...", async () => {
+  await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame }) });
+  renderQueue((await api("/api/queue")).shots);
+});
+
+$("stitch").onclick = () => busy($("stitch"), "Stitching...", async () => {
+  const j = await api("/api/stitch", { method: "POST" });
+  $("seqBody").innerHTML = `<video src="${j.url}" controls autoplay></video><div class="row"><a href="${j.url}" download>Download ${j.file}</a></div>`;
+});
+
+$("clear").onclick = async () => { renderQueue((await api("/api/queue", { method: "DELETE" })).shots); };
+
+(async () => {
+  const p = await api("/api/presets");
+  state.presets = p; state.max = p.max_shots;
+  $("mode").textContent = p.mode === "mock" ? "MOCK MODE (offline)" : "LIVE: Comfy Router";
+  $("mode").className = "badge " + p.mode;
+  $("models").textContent = `${p.image_model} -> ${p.video_model}`;
+  chips($("bodies"), p.bodies, "body", $("bodyFrag"));
+  chips($("moves"), p.moves, "move", $("moveFrag"));
+  renderQueue((await api("/api/queue")).shots);
+})().catch((e) => status(e.message, true));
+</script>
+</body>
+</html>

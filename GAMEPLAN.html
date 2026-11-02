@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GAMEPLAN: Shot Director @ ComfyUI Build Night</title>
+<style>
+  :root { --bg:#0a0c10; --panel:#12161e; --line:#232a37; --text:#e4e8ef; --dim:#8a93a6; --accent:#ffb84d; --red:#ff5d5d; --green:#6ee7a0; --conf:#ffd27a; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--text); font:13px/1.42 system-ui, sans-serif; display:flex; flex-direction:column; }
+  .strip { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; padding:9px 16px; border-bottom:1px solid var(--line); background:#0e1118; }
+  .strip h1 { font-size:16px; margin:0 8px 0 0; }
+  .strip b { color:var(--accent); }
+  .strip .stop b { color:var(--red); }
+  #clock { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--green); font-weight:600; }
+  main { flex:1; display:grid; grid-template-columns:1.25fr 1fr 1fr; gap:10px; padding:10px 14px; min-height:0; }
+  .col { display:flex; flex-direction:column; gap:10px; min-height:0; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  h2 { margin:0 0 6px; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); display:flex; justify-content:space-between; }
+  h3 { margin:6px 0 3px; font-size:13px; color:var(--accent); }
+  ul, ol { margin:0; padding-left:18px; }
+  li { margin:1px 0; }
+  .tasks { list-style:none; padding:0; }
+  .tasks label { display:flex; gap:7px; align-items:flex-start; cursor:pointer; }
+  .tasks input { margin-top:2px; accent-color:var(--green); }
+  .tasks input:checked + span { color:var(--dim); text-decoration:line-through; }
+  .cut { color:var(--red); font-weight:700; border-top:2px dashed var(--red); margin:5px 0 2px; padding-top:3px; font-size:12px; }
+  .conf { color:var(--conf); font-size:11px; border:1px solid #5c4a1c; border-radius:5px; padding:0 4px; white-space:nowrap; font-weight:400; }
+  .cmd { display:flex; gap:6px; align-items:center; margin:3px 0; }
+  .cmd code { flex:1; background:#080a0e; border:1px solid var(--line); border-radius:6px; padding:3px 6px; font:11.5px ui-monospace, Menlo, monospace; overflow-x:auto; white-space:nowrap; }
+  .cmd button { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:2px 7px; cursor:pointer; font-size:11px; transition:transform 160ms ease-out; }
+  .cmd button:active { transform:scale(0.97); }
+  .cmd button.ok { color:var(--green); border-color:var(--green); }
+  .note { color:var(--dim); font-size:11.5px; }
+  .pitch p { margin:2px 0; }
+  .demo li span { color:var(--accent); font-variant-numeric:tabular-nums; }
+  a { color:#82aaff; }
+  #reset { background:none; border:none; color:var(--dim); cursor:pointer; font-size:11px; }
+  .progress { color:var(--green); }
+</style>
+</head>
+<body>
+<div class="strip">
+  <h1>Shot Director: GAMEPLAN</h1>
+  <span>The Yard, 106 W 32nd St, NYC</span>
+  <span>Doors <b>5:30</b></span>
+  <span>Talks 8:30</span>
+  <span>Demos <b>9:00</b></span>
+  <span class="stop">Hard stop <b>10:30</b> <span class="conf">confirm on site</span></span>
+  <a href="https://luma.com/nyc-yjfm?tk=JBDyO8">Luma</a>
+  <span id="clock"></span>
+</div>
+<main>
+  <div class="col">
+    <section>
+      <h2><span>Timeline</span><span><span class="progress" id="progress"></span> <button id="reset" title="Uncheck everything">reset</button></span></h2>
+      <h3>5:30 - 7:30 Core loop on the real API</h3>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-k="p1a"><span>Hackathon credits + COMFY_API_KEY from Comfy staff; sign-up form done</span></label></li>
+        <li><label><input type="checkbox" data-k="p1b"><span>Router smoke curl returns a <code>request_id</code> (command in the middle column)</span></label></li>
+        <li><label><input type="checkbox" data-k="p1c"><span>Fix every <code>TODO(confirm on site)</code> in <code>router_client.py</code> with a Comfy dev</span></label></li>
+        <li><label><input type="checkbox" data-k="p1d"><span>One real LTX shot from the UI (badge says LIVE)</span></label></li>
+        <li><label><input type="checkbox" data-k="p1e"><span>One real FLUX 3 start frame from the UI</span></label></li>
+      </ul>
+      <div class="cut">7:30 CUT: no live shot yet? Stop debugging. Demo in mock mode + any live clip you got by curl.</div>
+      <h3>7:30 - 8:15 Polish + multi-shot</h3>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-k="p2a"><span>3 live shots queued + stitched into one sequence</span></label></li>
+        <li><label><input type="checkbox" data-k="p2b"><span>Stretch: last frame of shot N becomes first frame of shot N+1 (only if image input works)</span></label></li>
+        <li><label><input type="checkbox" data-k="p2c"><span>Export a ComfyUI workflow JSON (LTX camera LoRA) into <code>workflows/</code></span></label></li>
+        <li><label><input type="checkbox" data-k="p2d"><span>Save 1 great sequence mp4 as the demo backup</span></label></li>
+      </ul>
+      <div class="cut">8:15 CUT: feature freeze. Nothing new after this line.</div>
+      <h3>8:15 - 9:00 README + demo video + submit</h3>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-k="p3a"><span>README: live-mode notes, real model ids, a screenshot</span></label></li>
+        <li><label><input type="checkbox" data-k="p3b"><span>Record the 60 s demo (Cap Studio Mode or Cmd-Shift-5)</span></label></li>
+        <li><label><input type="checkbox" data-k="p3c"><span>Public GitHub repo pushed (command in the middle column)</span></label></li>
+        <li><label><input type="checkbox" data-k="p3d"><span>Submission form sent, bonus track chosen: LTX VFX</span></label></li>
+      </ul>
+      <div class="cut">9:00 DEMOS. Submitted by now. 10:30 = absolute last call <span class="conf">confirm on site</span></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>First 10 minutes on site</h2>
+      <ol>
+        <li>Find Comfy staff: hackathon credits + API key. Sign-up form (first 200 get credits): <a href="https://form.typeform.com/to/Ayn9Cwfj">Ayn9Cwfj</a></li>
+        <li>Ask: exact in-person submission mechanics and deadline (page says Nov 3 9 AM PT, Luma says end of tonight) <span class="conf">confirm on site</span></li>
+        <li>Ask: does <code>ltx/ltx-2-5-*</code> accept a first-frame image, and what is the field shape? <span class="conf">confirm on site</span></li>
+        <li>Ask: LTX/FLUX request fields (duration, aspect ratio), status values, where the output URL sits <span class="conf">confirm on site</span></li>
+        <li>Test Wi-Fi to the Router (<code>curl -sI https://api.comfy.org</code>); phone hotspot if it fails</li>
+      </ol>
+    </section>
+    <section>
+      <h2>Run commands</h2>
+      <div class="note">Repo</div>
+      <div class="cmd"><code>cd ~/Developer/Git/hackathons/open-source-higgsfield-2026-11-02/shot-director</code><button>copy</button></div>
+      <div class="note">Start (mock if no key), then open http://127.0.0.1:8000</div>
+      <div class="cmd"><code>uv sync && uv run shot-director</code><button>copy</button></div>
+      <div class="note">Live mode (paste the key yourself, never commit it)</div>
+      <div class="cmd"><code>export COMFY_API_KEY=PASTE_KEY && uv run shot-director</code><button>copy</button></div>
+      <div class="note">Final-quality video model</div>
+      <div class="cmd"><code>SHOT_DIRECTOR_VIDEO_MODEL=ltx/ltx-2-5-pro uv run shot-director</code><button>copy</button></div>
+      <div class="note">Force mock (bad Wi-Fi demo)</div>
+      <div class="cmd"><code>SHOT_DIRECTOR_MOCK=1 uv run shot-director</code><button>copy</button></div>
+      <div class="note">Router smoke test (prints a request_id) <span class="conf">body shape confirm on site</span></div>
+      <div class="cmd"><code>curl -s https://api.comfy.org/v2/models/ltx/ltx-2-5-fast/requests -H "X-API-Key: $COMFY_API_KEY" -H "Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" -d '{"content":[{"type":"text","text":"slow dolly-in on a rain-soaked neon street, 35mm film"}]}'</code><button>copy</button></div>
+      <div class="note">Publish (run inside the repo)</div>
+      <div class="cmd"><code>gh repo create shot-director --public --source . --push</code><button>copy</button></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>Submission checklist</h2>
+      <ul class="tasks">
+        <li><label><input type="checkbox" data-k="s1"><span>Public repo</span></label></li>
+        <li><label><input type="checkbox" data-k="s2"><span>OSS license (MIT, already in repo)</span></label></li>
+        <li><label><input type="checkbox" data-k="s3"><span>Setup instructions (README, already in repo)</span></label></li>
+        <li><label><input type="checkbox" data-k="s4"><span>Demo video: how it was built + why it is new (polish not judged)</span></label></li>
+        <li><label><input type="checkbox" data-k="s5"><span>Workflow files in <code>workflows/</code> (recommended)</span></label></li>
+        <li><label><input type="checkbox" data-k="s6"><span>SFW, no unlicensed IP or likeness in demo frames</span></label></li>
+        <li><label><input type="checkbox" data-k="s7"><span>One main + one bonus: LTX VFX ($2k, LTX must be the core video model)</span></label></li>
+        <li><label><input type="checkbox" data-k="s8"><span>Submit: <a href="https://form.typeform.com/to/V1dSQrkS">form V1dSQrkS</a> <span class="conf">in-person path confirm on site</span></span></label></li>
+      </ul>
+    </section>
+    <section class="demo">
+      <h2>60-second demo script</h2>
+      <ol>
+        <li><span>0:00</span> "Higgsfield's Cinema Studio, rebuilt open source tonight on Comfy."</li>
+        <li><span>0:10</span> Drop a photo (or FLUX it). Pick 35mm + Dolly in. Generate.</li>
+        <li><span>0:25</span> Two more: Super 8 + Orbit, DV + Crash zoom.</li>
+        <li><span>0:40</span> Stitch. Play the sequence full screen.</li>
+        <li><span>0:50</span> How: presets compile to prompts, LTX 2.5 + FLUX 3 on Comfy Router, ffmpeg stitch, one Python process, MIT. Show the repo URL.</li>
+      </ol>
+    </section>
+    <section class="pitch">
+      <h2>Pitch (3 lines)</h2>
+      <p>Shot Director is an open-source Cinema Studio: one frame in, a directed multi-shot sequence out.</p>
+      <p>Pick a camera body and a move; it writes the cinematography prompt and renders it with LTX 2.5 on Comfy Router.</p>
+      <p>MIT, one command to run, and every preset is plain text anyone can fork.</p>
+    </section>
+  </div>
+</main>
+<script>
+  const KEY = "shot-director-gameplan-2026-11-02";
+  const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+  const boxes = [...document.querySelectorAll("input[type=checkbox][data-k]")];
+  function progress() {
+    const done = boxes.filter((b) => b.checked).length;
+    document.getElementById("progress").textContent = `${done}/${boxes.length} done`;
+  }
+  boxes.forEach((b) => {
+    b.checked = !!saved[b.dataset.k];
+    b.addEventListener("change", () => { saved[b.dataset.k] = b.checked; localStorage.setItem(KEY, JSON.stringify(saved)); progress(); });
+  });
+  document.getElementById("reset").onclick = () => {
+    if (!confirm("Uncheck everything?")) return;
+    boxes.forEach((b) => { b.checked = false; saved[b.dataset.k] = false; });
+    localStorage.setItem(KEY, JSON.stringify(saved)); progress();
+  };
+  progress();
+
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+    return Promise.resolve();
+  }
+  document.querySelectorAll(".cmd button").forEach((btn) => {
+    btn.onclick = () => copyText(btn.previousElementSibling.textContent).then(() => {
+      btn.textContent = "copied"; btn.classList.add("ok");
+      setTimeout(() => { btn.textContent = "copy"; btn.classList.remove("ok"); }, 1200);
+    });
+  });
+
+  function tick() {
+    const now = new Date(), demo = new Date(now); demo.setHours(21, 0, 0, 0);
+    const mins = Math.round((demo - now) / 60000);
+    const t = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    document.getElementById("clock").textContent = mins > 0 ? `${t} | ${Math.floor(mins / 60)}h ${mins % 60}m to demos` : `${t} | demos started`;
+  }
+  tick(); setInterval(tick, 30000);
+</script>
+</body>
+</html>

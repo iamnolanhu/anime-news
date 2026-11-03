@@ -1,10 +1,10 @@
-# Deploy: your-site.example
+# Deploy: your-site.example (Anime News)
 
-Public deploy on the deploy host (Docker behind the shared Traefik, Let's Encrypt resolver `le`).
+Public deploy of Anime News (the Shot Director app) on the deploy host (Docker behind the shared Traefik, Let's Encrypt resolver `le`).
 
 | What | Where |
 | --- | --- |
-| Public URL | https://your-site.example (gallery: `/episodes`) |
+| Public URL | https://your-site.example (gallery: `/episodes`); alias https://your-site.example (same container, one Traefik rule) |
 | Code on the box | `/root/shot-director/app` (rsynced copy of this repo, no `.git`) |
 | Env file | `/root/shot-director/.env` (mode 600): `COMFY_API_KEY`, `SHOT_DIRECTOR_ACCESS_TOKEN`, `SHOT_DIRECTOR_PUBLIC_URL` |
 | Token copy on the Mac | `~/.claude/.secrets/services/comfy/shot-director-deploy.env` (mode 600) |
@@ -52,11 +52,12 @@ Then merge its ledger entry into `/data/media/episodes.json` in the container (d
 
 ## DNS first (Traefik gotcha)
 
-Add the A record before the first `compose up`:
+Add the A record for every host in the Traefik rule before `compose up`:
 
 ```bash
 ssh deploy-host 'cd /root/namecheap_scripts && python3 add_subdomain.py --domain your-site.example --ip 203.0.113.10 --dry-run'
 # then the same without --dry-run; wait for: dig +short your-site.example @1.1.1.1
+# (your-site.example was added the same way and stays as an alias)
 ```
 
 Traefik orders the certificate when the container starts and does not retry after an NXDOMAIN. If the site serves Traefik's default certificate, run `ssh deploy-host docker restart traefik-traefik-1` once DNS resolves.

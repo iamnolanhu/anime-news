@@ -68,6 +68,7 @@ The engine listens on `http://127.0.0.1:8765`. CORS allows the site's origin (`A
 | POST | `/api/render` | `{storyboard, quality?: "480p"\|"720p" (default "480p"), vertical?: bool}` | 202 `{job_id}`; 409 while a render is running |
 | GET | `/api/jobs/{id}` | | `{job_id, status: "queued"\|"rendering"\|"cutting"\|"done"\|"failed", stage, done, total, started, error?, episode?: {id, mp4_url, vertical_url?, duration, shots, cuts_per_minute}}` |
 | DELETE | `/api/jobs/{id}` | | cancels, best effort: `{cancelled: true}` |
+| GET | `/api/weekly` | | the weekly manifest: `{series, updated, weeks: [{week, label, status, published, headlines, mp4_url, vertical_url, poster_url, ...}]}`, newest first ([docs/WEEKLY.md](docs/WEEKLY.md)) |
 | GET | `/api/episodes` | | `{episodes: [{id, headline, created, mp4_url, vertical_url?, duration, shots, quality, cost_estimate?}]}` |
 | GET | `/media/{file}` | | the file (mp4, png, json) |
 

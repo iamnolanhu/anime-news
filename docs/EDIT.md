@@ -73,8 +73,9 @@ with `"at": null` plays on every storyboard scene change and on the end card.
 7. **Talk takes hold (R11, R12).** A take is one framing, nearly whole (0.15 s to its end minus 0.1 s), never
    punched into after the fact. A take over 4 s holds 2-3.7 s on the speaker and lends the rest of its line to the
    scene's next pictures (L-cut), or, when it ends the scene, opens its line under the previous pictures (J-cut).
-   The cut falls on a clause boundary, placed by word count and snapped to the nearest real pause in the take's
-   sound within 0.5 s (ffmpeg silencedetect, -32 dB for 0.12 s). A J-cut's voice starts on a cut of the previous run,
+   The cut falls only on a real pause in the take's sound (ffmpeg silencedetect, -32 dB for 0.12 s) that lies within
+   0.5 s of a clause boundary (placed by word count) and at least 2 s from the cut-away end; a take with no such pause,
+   or no sound, holds whole. A J-cut's voice starts on a cut of the previous run,
    and no cut falls in a line's first 0.8 s. The take's sound always plays whole.
 8. **Lines are never cut off (R13).** A scene's narration plays in full over its first run of pictures; the run
    grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s. When

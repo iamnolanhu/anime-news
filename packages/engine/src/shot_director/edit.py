@@ -322,14 +322,16 @@ def speech_gaps(clip: str) -> list[float]:
 
 
 def clause_marks(line: str, a0: float, a1: float, gaps: list[float]) -> list[float]:
-    """Source times of the clause boundaries of a spoken line over [a0, a1]: placed by word count, then snapped to
-    the nearest real pause of the take within 0.5 s when there is one."""
+    """Where a cut may fall inside a spoken line (R12): the clause boundaries of the line, placed by word count over
+    [a0, a1], each kept only when a real pause of the take lies within 0.5 s, and moved onto that pause. A take with no
+    pause near a clause boundary (or no sound) gives none, so its picture is never cut while it speaks."""
     words = [len(c.split()) for c in split_clauses(line)] if line else []
     out = []
     for i in range(1, len(words)):
         m = a0 + (a1 - a0) * sum(words[:i]) / max(1, sum(words))
         near = [g for g in gaps if abs(g - m) <= 0.5 and a0 < g < a1]
-        out.append(min(near, key=lambda g: abs(g - m)) if near else m)
+        if near:
+            out.append(min(near, key=lambda g: abs(g - m)))
     return sorted(set(out))
 
 

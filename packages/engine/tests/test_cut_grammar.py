@@ -283,3 +283,26 @@ def test_a_line_longer_than_its_pictures_is_never_cut_off(media, tmp_path):
     got = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
                                capture_output=True, text=True).stdout)
     assert abs(got - rep["duration"]) < 0.1 and rep["voice"][0]["played"] == rep["voice"][0]["file_dur"]
+
+
+def test_no_pause_in_a_take_means_no_cut_while_it_speaks(media, tmp_path):
+    """A talk picture is cut only on a real pause found in the take's sound, at least 2 s in; a take that speaks
+    without a pause (or has no sound) holds whole, with no L- or J-cut."""
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6,hue=h=30",
+        "-f", "lavfi", "-i", "aevalsrc='0.4*sin(2*PI*220*t)*between(t,0.3,5.7)':s=48000:d=6",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tmp_path / "nopause.mp4"))
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6,hue=h=60", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        str(tmp_path / "silent.mp4"))
+    assert edit.clause_marks(LINE1, 0.15, 5.9, edit.speech_gaps(str(tmp_path / "nopause.mp4"))) == []
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "thesis", "shots": [{"kind": "talk", "clip": str(tmp_path / "nopause.mp4"), "line": LINE1},
+                                     {"kind": "action", "clip": str(media / "a.mp4")}]},
+        {"beat": "vignette", "shots": [{"kind": "action", "clip": str(media / "b.mp4")},
+                                       {"kind": "talk", "clip": str(tmp_path / "silent.mp4"), "line": LINE3}]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    talk = [s for s in segs if s.extra.get("talk")]
+    assert len(talk) == 2
+    for s in talk:   # whole: 0.15 s to the end minus 0.1 s
+        assert abs(s.start - 0.15) < 1e-6 and abs(s.frames / FPS - 5.75) < 1 / FPS
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert metrics(report)["cut_in_line"] == 0

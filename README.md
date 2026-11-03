@@ -46,6 +46,7 @@ The Studio's **Storyboard** panel sits above the shot queue and groups shots int
 Needs [uv](https://docs.astral.sh/uv/) and `ffmpeg` on PATH (macOS: `brew install ffmpeg`).
 
 ```bash
+cd packages/engine
 uv sync
 uv run shot-director            # http://127.0.0.1:8000  (--port 8010 to change)
 ```
@@ -120,6 +121,7 @@ Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one 
 **CLI** (one episode, or the channel itself):
 
 ```bash
+cd packages/engine
 uv run shot-director-episode                                  # top new story -> 1-minute episode
 uv run shot-director-episode --minutes 5                      # target length
 uv run shot-director-episode --headline "Mayor bans Mondays" --mock --out /tmp/ep
@@ -135,7 +137,7 @@ uv run shot-director-episode --loop --every 60m               # self-running: a 
 **Alternative: cron** instead of `--loop`:
 
 ```cron
-0 * * * * cd /path/to/shot-director && uv run shot-director-episode >> episodes.log 2>&1
+0 * * * * cd /path/to/anime-news/packages/engine && uv run shot-director-episode >> episodes.log 2>&1
 ```
 
 **Prior art:** fal.live / Rehan Sheikh's "infinite interdimensional cable" (chat-directed endless AI TV on MiniMax H3 Max) and levelsio's Infinite Slop run an endless stream steered by viewers or chat. Shot Director is news-directed and episodic instead: one episode per story, hourly or daily, with cinematography presets and shot-to-shot continuity, open source on ComfyUI's Router.
@@ -153,6 +155,7 @@ uv run shot-director-episode --loop --every 60m               # self-running: a 
 Run on 2026-11-02 (macOS 13, ffmpeg 7, uv 0.7.8), mock mode, no API key:
 
 ```bash
+cd packages/engine
 uv sync
 SHOT_DIRECTOR_MAX_SHOTS=3 uv run shot-director --port 8765 > /tmp/sd_server.log 2>&1 & echo $! > /tmp/sd_server.pid
 B=http://127.0.0.1:8765

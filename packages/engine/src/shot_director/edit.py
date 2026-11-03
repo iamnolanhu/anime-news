@@ -347,7 +347,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 if dur > 0.5:
                     info[clip] = (dur, *clip_profile(clip, dur))
         profiles.append(info)
-    best = max(((v[2], c, v[1], v[0]) for info in profiles for c, v in info.items()), default=None)
+    best = max(((v[2], c, v[1], v[0]) for info in profiles for c, v in info.items()
+                if v[2] >= max(SHARP_GATE * v[3], SHARP_FLOOR)), default=None)   # the gate applies to the cold open too
     span = title.frames / fps
     if best and best[3] - 0.05 >= span:   # cold open: title over the strongest frame in the whole episode
         _, clip, t, dur = best
@@ -433,6 +434,10 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             ledger.release(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
             src_dur = min(ramp.frames / fps / speed, ledger.room_after(ramp.src, ramp.start, dur))
             n = int(src_dur * speed * fps + 1e-6)
+            med = info[ramp.src][3]
+            if src_dur > ramp.extra["src_dur"] + 1e-6 and \
+                    seg_sharpness(ramp.src, ramp.start, src_dur) < max(SHARP_GATE * med, SHARP_FLOOR):
+                n = 0   # the extended span runs into smeared frames: no ramp on this shot
             if n / fps >= 0.6:
                 ramp.speed, ramp.frames = speed, n
                 ramp.extra["src_dur"] = n / fps / speed
@@ -486,7 +491,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                         break
                     a, e = rng.choice(spans)
                     cand = rng.uniform(a, e - bl)
-                    if seg_sharpness(src, cand, bl) >= SHARP_GATE * med:
+                    if seg_sharpness(src, cand, bl) >= max(SHARP_GATE * med, SHARP_FLOOR):
                         st = cand
                         break
                 if st is None:

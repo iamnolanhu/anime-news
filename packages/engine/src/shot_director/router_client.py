@@ -89,14 +89,17 @@ class RouterError(RuntimeError):
 
 class CreditMeter:
     """Sums the X-Comfy-Credits-Used response header across every Router call in this process.
-    A render snapshots `total` before and after (one render runs at a time)."""
+    A render snapshots `total` before and after (one render runs at a time).
+    A queued job reports its one charge on more than one response (seen 2026-11-03: the COMPLETED status poll
+    and the result fetch both carry it), so calls of one job pass the same `job` key and count once."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.total = 0.0
         self.seen = 0
+        self._jobs: set[str] = set()
 
-    def record(self, headers) -> None:
+    def record(self, headers, job: str | None = None) -> None:
         try:
             value = headers.get("X-Comfy-Credits-Used") or headers.get("x-comfy-credits-used")
         except AttributeError:
@@ -108,6 +111,10 @@ class CreditMeter:
         except (TypeError, ValueError):
             return
         with self._lock:
+            if job is not None:
+                if job in self._jobs:
+                    return
+                self._jobs.add(job)
             self.total += amount
             self.seen += 1
 
@@ -138,8 +145,9 @@ class LiveRouter:
         self.seedance_resolution = seedance_resolution or SEEDANCE_RESOLUTION
 
     # -- HTTP -------------------------------------------------------------
-    def _req_full(self, method: str, url: str, body: dict | None = None) -> tuple[int, dict, dict]:
-        """Returns (http status, response headers, json body)."""
+    def _req_full(self, method: str, url: str, body: dict | None = None,
+                  job: str | None = None) -> tuple[int, dict, dict]:
+        """Returns (http status, response headers, json body). `job`: the credit-meter key of a queued job."""
         headers = {"X-API-Key": self._key, "Accept": "application/json"}
         data = None
         if body is not None:
@@ -149,7 +157,7 @@ class LiveRouter:
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                CREDITS.record(r.headers)
+                CREDITS.record(r.headers, job)
                 return r.status, dict(r.headers), json.loads(r.read() or b"{}")
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:400]
@@ -157,8 +165,8 @@ class LiveRouter:
                 raise RouterError("Router says insufficient_credits (402): top up or get hackathon credits") from e
             raise RouterError(f"Router HTTP {e.code}: {detail}") from e
 
-    def _req(self, method: str, url: str, body: dict | None = None) -> dict:
-        return self._req_full(method, url, body)[2]
+    def _req(self, method: str, url: str, body: dict | None = None, job: str | None = None) -> dict:
+        return self._req_full(method, url, body, job)[2]
 
     @staticmethod
     def _wait(headers: dict) -> float:
@@ -177,16 +185,17 @@ class LiveRouter:
 
     def _run_model(self, model: str, body: dict, timeout: float = TIMEOUT_SECONDS) -> dict:
         base = f"{BASE_URL}/v2/models/{model}/requests"
-        rid = self._req("POST", base, body).get("request_id")
+        job = str(uuid.uuid4())   # every response of this job shares one credit-meter key: its charge counts once
+        rid = self._req("POST", base, body, job).get("request_id")
         if not rid:
             raise RouterError("Router returned no request_id")
         deadline = time.time() + timeout
         while time.time() < deadline:
-            _, hdrs, status = self._req_full("GET", f"{base}/{rid}/status")
+            _, hdrs, status = self._req_full("GET", f"{base}/{rid}/status", job=job)
             if status.get("error_type"):
                 raise RouterError(f"Router job failed: {self._error_text(status)}")
             if str(status.get("status", "")).upper() == "COMPLETED":
-                code, hdrs, result = self._req_full("GET", f"{base}/{rid}")
+                code, hdrs, result = self._req_full("GET", f"{base}/{rid}", job=job)
                 if code == 200:
                     if isinstance(result, dict) and result.get("error_type"):
                         raise RouterError(f"Router job failed: {self._error_text(result)}")

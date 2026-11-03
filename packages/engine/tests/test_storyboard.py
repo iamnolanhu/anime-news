@@ -1,6 +1,11 @@
+import json
+import os
+from pathlib import Path
+
 import pytest
 
 from shot_director import storyboard as S
+from shot_director import style
 
 
 @pytest.mark.parametrize("minutes,scenes", [(0.5, 2), (1, 4), (2, 8), (3, 12), (5, 20)])
@@ -86,3 +91,81 @@ def test_url_fetch_fails_soft():
 
 def test_strip_html():
     assert S.strip_html("<html><script>x()</script><p>Hello &amp; <b>bye</b></p></html>") == "Hello & bye"
+
+
+# -- the cast file (<media>/cast.json) ------------------------------------------------------------
+
+CAST_DOC = {"cast": [
+    {"id": "anchor", "name": "SHION", "role": "the Anchor", "look": "adult woman, mid-20s, long silver hair, thin glasses",
+     "trait": "perfectly composed", "voice": "21m00Tcm4TlvDq8ikWAM",
+     "poses": {"talk": {"id": "upper80v2_P019", "phrase": "tucks a strand of hair behind her ear", "ref_image": "/nope.png"},
+               "still": "rests her chin on both palms"}},
+    {"id": "operative", "name": "HINA", "role": "the Field Reporter", "look": "adult woman, mid-20s, copper bob, hoodie"},
+    {"id": "analyst", "name": "DR. RENA", "role": "the Analyst", "look": "adult woman, mid-20s, long navy hair, lab coat"},
+]}
+
+
+def _write_cast(doc):
+    media = Path(os.environ["ANIME_NEWS_MEDIA"])
+    media.mkdir(parents=True, exist_ok=True)
+    (media / "cast.json").write_text(json.dumps(doc))
+    return media
+
+
+def test_cast_file_replaces_the_builtin_cast():
+    _write_cast(CAST_DOC)
+    cast = {c["id"]: c for c in S.default_cast()}
+    assert cast["anchor"]["name"] == "SHION" and cast["analyst"]["name"] == "DR. RENA"
+    assert cast["anchor"]["poses"]["talk"] == {"phrase": "tucks a strand of hair behind her ear",
+                                               "id": "upper80v2_P019", "ref_image": "/nope.png"}
+    assert cast["anchor"]["poses"]["still"] == {"phrase": "rests her chin on both palms"}
+    assert cast["operative"]["voice"] == S.DEFAULT_VOICES["operative"]   # missing fields fall back per id
+    sb = S.build("Mayor bans Mondays", minutes=2)              # 8 scenes: every template act, every speaker
+    assert [c["name"] for c in sb["cast"]] == ["SHION", "HINA", "DR. RENA"]
+    prompts = " ".join(s["prompt"] + s.get("line", "") for sc in sb["scenes"] for s in sc["shots"])
+    assert "SHION" in prompts and "Hina here." in prompts and "KUROGANE" not in prompts
+    block = S._cast_block(S.default_cast())
+    assert "talk shot: she tucks a strand of hair behind her ear" in block and "perfectly composed" in block
+
+
+def test_broken_cast_file_falls_back_to_the_builtin_cast():
+    _write_cast({"cast": CAST_DOC["cast"][:2]})            # no analyst
+    assert [c["name"] for c in S.default_cast()] == ["KUROGANE", "VEX", "DR. HAKASE"]
+    _write_cast("not a cast")
+    assert S.default_cast() == S.builtin_cast()
+
+
+def test_style_sheet_prompt_follows_the_cast_file_anchor():
+    media = Path(os.environ["ANIME_NEWS_MEDIA"])
+    assert style.sheet_prompt(media) == style.SHEET_PROMPT and "silver crew cut" in style.SHEET_PROMPT
+    _write_cast(CAST_DOC)
+    p = style.sheet_prompt(media)
+    assert "SHION" in p and "long silver hair, thin glasses" in p and "crew cut" not in p
+
+
+def test_styled_frame_sends_the_pose_drawing_as_a_second_reference(tmp_path):
+    (tmp_path / style.SHEET_NAME).write_bytes(b"sheet")
+    pose = tmp_path / "pose.png"
+    pose.write_bytes(b"pose")
+    sent = []
+
+    class FakeLive:
+        mode = "live"
+
+        def _run_model(self, model, body):
+            sent.append(body)
+            return {"result": {"sample": "https://x/img.png"}}
+
+        def _dig(self, doc, *keys):
+            for k in keys:
+                doc = doc.get(k)
+            return doc
+
+        def _download(self, url, out):
+            out.write_bytes(b"img")
+            return out
+
+    style.generate_styled_frame(FakeLive(), "a scene", tmp_path / "a.png", tmp_path, pose_ref=pose)
+    style.generate_styled_frame(FakeLive(), "a scene", tmp_path / "b.png", tmp_path, pose_ref=tmp_path / "missing.png")
+    assert len(sent[0]["images"]) == 2 and sent[0]["prompt"].startswith(style.POSE_REFERENCE_LEAD)
+    assert len(sent[1]["images"]) == 1 and sent[1]["prompt"].startswith(style.REFERENCE_LEAD)

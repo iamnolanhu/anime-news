@@ -262,6 +262,15 @@ def main() -> None:
         plan = json.loads(Path(args.recut).read_text())
         out = Path(args.recut.replace(".plan.json", ".mp4"))
         edit.assemble(plan, out, audio=True, base=media)
+        # the --no-cut run left a "rendered" ledger entry for this plan: the episode now exists
+        rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+        with episode._LEDGER_LOCK:
+            episode._write_ledger(media, [{**e, "status": "done", "file": out.name, "path": str(out),
+                                           "url": f"/media/{out.name}", "finished": episode._now(),
+                                           "cut": {k: rep.get(k) for k in ("duration", "shots", "cuts_per_minute",
+                                                                            "avg_shot_s", "audio", "reuse")}}
+                                          if e.get("plan") == str(Path(args.recut).resolve()) else e
+                                          for e in episode.read_ledger(media)])
         print(out)
         return
     router = make_router(media)

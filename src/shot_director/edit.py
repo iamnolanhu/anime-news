@@ -700,6 +700,9 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
 
 
 # ---------------------------------------------------------------- audio
+INTRO_HIT_FROM_END = 0.55   # music kit riser: its impact sits 0.55 s before the end
+
+
 class _Bus:
     """One audio bus rendered by its own ffmpeg run: many delayed file inputs in one graph with the other
     buses ended the whole mix early (ffmpeg 7.1), so each bus is a WAV stem of exactly the cut's length."""
@@ -803,9 +806,14 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path,
     music_wav = None
     if music:
         drop = title.at if title and title.at > 0 else 0.0
-        bed_at = min(drop, _duration(intro) - 0.15) if intro and drop > 0 else 0.0
-        if bed_at > 0:   # the riser plays from 0 and hands over to the bed on the drop (0.15 s crossfade)
-            music_bus.add(["-i", intro], f"{stereo},atrim=0:{bed_at + 0.15:.3f},volume={BED_VOLUME},"
+        bed_at = drop if intro and drop > 0 else 0.0
+        if bed_at > 0:
+            # the riser's hit (INTRO_HIT_FROM_END before its end) lands on the drop: a cold open shorter than
+            # the riser skips the riser's head, a longer one starts the riser late; the bed takes over on the drop
+            offset = bed_at - max(0.0, _duration(intro) - INTRO_HIT_FROM_END)
+            head = f"atrim=start={-offset:.3f},asetpts=PTS-STARTPTS," if offset < 0 else ""
+            delay = f",adelay={int(offset * 1000)}:all=1" if offset > 0 else ""
+            music_bus.add(["-i", intro], f"{stereo},{head}volume={BED_VOLUME}{delay},atrim=0:{bed_at + 0.15:.3f},"
                                          f"afade=t=out:st={bed_at:.3f}:d=0.15")
         length, ms = total - bed_at, int(bed_at * 1000)
         music_bus.add(["-stream_loop", "-1", "-i", music],

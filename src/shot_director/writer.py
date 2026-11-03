@@ -333,6 +333,10 @@ def validate_v2(script: object, slots: list[tuple[str, list[tuple[str, str]]]]) 
                                                                       else _clip(s.get("caption") or "", CAPTION_MAX))})
         out_acts.append({"act": act_name, "setting": " ".join(str(a.get("setting", "")).split()), "shots": out_shots})
     last = out_acts[-1]["shots"][-1]
+    if last["kind"] == "talk":   # check the untrimmed line, so a long line is not cut mid-phrase and re-tagged
+        full = " ".join(str(acts[-1]["shots"][-1].get("line") or "").split())
+        if full.rstrip(".! ").lower().endswith("back in one hour"):
+            last["line"] = last["caption"] = full
     if last["kind"] == "talk" and not last["line"].rstrip(".! ").lower().endswith("back in one hour"):
         last["line"] = last["caption"] = f"{last['line'].rstrip()} Back in one hour."
     return {"logline": " ".join(str(script["logline"]).split()),

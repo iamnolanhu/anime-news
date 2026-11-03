@@ -391,10 +391,19 @@ def render(sb: dict, router, media: Path, quality: str = DEFAULT_QUALITY, vertic
     return {"id": entry_id, **fields}
 
 
+def retry_estimate(sb: dict, shots: list[dict], quality: str, media: Path) -> dict:
+    """Spend estimate of a retry: only the failed shots, as a sub-storyboard (cast assets count as cached)."""
+    failed = {(r["scene"], r["id"]) for r in shots if not usable(r)}
+    sub = dict(sb, scenes=[dict(sc, shots=[s for s in sc["shots"] if (sc["id"], s["id"]) in failed], narration="")
+                           for sc in sb["scenes"]])
+    return estimate(sub, quality, media)
+
+
 def retry(router, media: Path, shots_file: Path, parallel: int = SHOT_PARALLEL, vertical: bool = False,
-          progress=None) -> dict:
+          progress=None, max_cost: float | None = None, estimate_only: bool = False) -> dict:
     """Re-render only the failed shots of <epid>.shots.json (fresh frame + clip), then re-cut and update the
-    episode's ledger entry."""
+    episode's ledger entry. Same spend rules as render: `estimate_only` returns the estimate of the failed
+    shots without rendering; `max_cost` refuses a live retry whose estimate is over the cap."""
     media = Path(media).resolve()
     doc = json.loads(Path(shots_file).read_text())
     sb, shots, epid = doc["storyboard"], doc["shots"], doc["episode_id"]
@@ -402,6 +411,11 @@ def retry(router, media: Path, shots_file: Path, parallel: int = SHOT_PARALLEL, 
     router.seedance_resolution = quality
     by_id = {(sc["id"], s["id"]): (sc, s) for sc in sb["scenes"] for s in sc["shots"]}
     todo_idx = [i for i, r in enumerate(shots) if not usable(r)]
+    est = retry_estimate(sb, shots, quality, media)
+    if estimate_only:
+        return {"estimate": est, "failed_shots": len(todo_idx), "episode_id": epid}
+    if router.mode == "live" and max_cost and est["usd"] > max_cost:
+        raise CostCapExceeded(f"retry estimated ${est['usd']:.2f} is over the ${max_cost:.2f} cap: {est['parts']}")
     started = time.time()
     credits0 = CREDITS.snapshot()
     refs, voices = cast_assets(router, media, sb)

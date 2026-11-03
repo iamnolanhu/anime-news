@@ -806,7 +806,11 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path,
             0.15 if sc is None or sc < 0 else scene_start.get(sc, 0.0) + 0.1)
         ms = int(at * 1000)
         line = _line_wav(p, work / f"line-n{len(voice.outs)}.wav")
-        voice.add(["-i", str(line)], f"{stereo},adelay={ms}|{ms}")
+        # a scene's narration ends with its scene: the next scene (a talk take has its own dialogue) starts clean
+        nxt = min((st for st in scene_start.values() if st > at + 0.2), default=total)
+        room = max(0.3, nxt - at - 0.1)
+        voice.add(["-i", str(line)], f"{stereo},atrim=0:{room:.3f},afade=t=out:st={max(0.0, room - 0.25):.3f}:d=0.25,"
+                                     f"adelay={ms}|{ms}")
     n_narr = len(voice.outs)
     # dialogue: each talk take's own sound for exactly the source span on screen, one line per take
     talks: dict[int, list[Seg]] = {}

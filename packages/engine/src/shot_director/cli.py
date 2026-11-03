@@ -94,8 +94,16 @@ def cmd_render(args) -> None:
     if args.retry:
         from . import render_storyboard as rs
         from .router_client import make_router
-        router = make_router(media)
-        entry = rs.retry(router, media, Path(args.retry).resolve(), args.parallel, args.vertical)
+        router = make_router(media, args.quality)
+        try:
+            entry = rs.retry(router, media, Path(args.retry).resolve(), args.parallel, args.vertical,
+                             max_cost=args.max_cost, estimate_only=args.estimate_only)
+        except Exception as e:  # noqa: BLE001
+            print(f"retry failed: {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
+        if args.estimate_only:
+            print(json.dumps(entry, indent=1))
+            return
         _print_episode(entry, media)
         return
     if not args.storyboard:

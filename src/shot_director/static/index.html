@@ -28,7 +28,7 @@
   button:disabled { opacity:.5; cursor:wait; }
   .frame img { width:100%; border-radius:8px; margin-top:8px; display:block; }
   .fragment { font-size:12px; color:var(--dim); margin-top:6px; min-height:2.6em; }
-  .shots { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; }
+  .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; }
   .slot { border:1px dashed var(--line); border-radius:10px; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; color:var(--dim); padding:6px; }
   .slot video { width:100%; border-radius:8px; }
   .slot .meta { font-size:12px; margin-top:4px; text-align:center; }
@@ -40,7 +40,9 @@
 </style>
 <link rel="stylesheet" href="/static/theme.css">
 <link rel="stylesheet" href="/static/public.css">
+<link rel="stylesheet" href="/static/storyboard.css">
 <script src="/static/access.js"></script>
+<script src="/static/storyboard.js"></script>
 <script>
 /* PostHog (public deploy only; house rule: every public app ships it). Project 530416 via the
    first-party ingest proxy analytics.example. Never loads on localhost / 127.0.0.1 (local dev stays offline). */
@@ -104,8 +106,12 @@ posthog.register({app: "shot-director"});
     </section>
   </div>
   <div>
+    <section id="storyboardPanel">
+      <h2>Storyboard</h2>
+      <div id="storyboard"></div>
+    </section>
     <section>
-      <h2>Shot queue (<span id="count">0</span>/3)</h2>
+      <h2>Shot queue (<span id="count">0</span>/<span id="max">12</span>)</h2>
       <div class="shots" id="slots"></div>
       <div class="row">
         <button class="primary" id="stitch" style="margin-top:0">Stitch sequence</button>
@@ -114,7 +120,7 @@ posthog.register({app: "shot-director"});
     </section>
     <section id="sequence">
       <h2>Sequence</h2>
-      <div id="seqBody" style="color:var(--dim)">Generate up to 3 shots, then stitch them into one clip.</div>
+      <div id="seqBody" style="color:var(--dim)">Build scenes, generate up to <span id="maxHint">12</span> shots, then stitch them in scene order into one clip.</div>
     </section>
   </div>
 </main>
@@ -124,7 +130,7 @@ const $ = (id) => document.getElementById(id);
 // theme hooks (theme.js); no-ops if the theme or anime.js did not load
 const fx = (name, ...args) => { try { const t = window.theme; if (t && t[name]) t[name](...args); } catch (e) {} };
 let prevCount = null;
-const state = { body: "35mm", move: "dolly_in", engine: null, frame: null, presets: null, max: 3 };
+const state = { body: "35mm", move: "dolly_in", engine: null, frame: null, presets: null, max: 12 };
 
 function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
 
@@ -147,14 +153,18 @@ function chips(el, items, key, fragEl) {
   }
 }
 
-function renderQueue(shots) {
+function renderQueue(serverShots) {
+  const shots = window.storyboard.reconcile(serverShots);  // queue shown (and stitched) in scene order
+  const pos = Object.fromEntries(shots.map((s, i) => [s.id, i + 1]));
   $("count").textContent = shots.length;
   $("slots").innerHTML = "";
-  for (let i = 0; i < state.max; i++) {
+  const slots = Math.min(state.max, shots.length + 1);  // filled shots + one slot for the next shot
+  for (let i = 0; i < slots; i++) {
     const s = shots[i], d = document.createElement("div");
     d.className = "slot";
     if (s) {
-      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}<br>${s.engine || ""}${s.continued ? " (continues shot " + i + ")" : ""}</div>`;
+      const cont = s.continued_from && pos[s.continued_from] ? ` (continues shot ${pos[s.continued_from]})` : "";
+      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}<br>${s.engine || ""}${cont}</div>`;
       d.title = s.prompt;
     } else {
       d.textContent = `Shot ${i + 1}`;
@@ -190,8 +200,10 @@ $("shoot").onclick = (e) => {
   const slot = $("slots").children[Number($("count").textContent) || 0];
   fx("scan", slot, true);
   return busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
-    await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame, engine: state.engine }) });
+    const beat = $("scene").value;
+    const req = window.storyboard.prepare({ body: state.body, move: state.move, scene: beat, frame: state.frame, engine: state.engine });
+    const shot = await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+    window.storyboard.addShot(shot, beat);
     renderQueue((await api("/api/queue")).shots);
   }).finally(() => fx("scan", slot, false));
 };
@@ -200,7 +212,8 @@ $("stitch").onclick = (e) => {
   fx("burst", $("stitch"), e);
   fx("scan", $("sequence"), true);
   return busy($("stitch"), "Stitching...", async () => {
-    const j = await api("/api/stitch", { method: "POST" });
+    const j = await api("/api/stitch", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: window.storyboard.order() }) });
     $("seqBody").innerHTML = `<video src="${j.url}" controls autoplay></video><div class="row"><a href="${j.url}" download>Download ${j.file}</a></div>`;
   }).finally(() => fx("scan", $("sequence"), false));
 };
@@ -210,6 +223,9 @@ $("clear").onclick = async () => { renderQueue((await api("/api/queue", { method
 (async () => {
   const p = await api("/api/presets");
   state.presets = p; state.max = p.max_shots;
+  $("max").textContent = $("maxHint").textContent = p.max_shots;
+  window.storyboard.init($("storyboard"), { presets: () => state.presets, max: () => state.max,
+    onChange: async () => renderQueue((await api("/api/queue")).shots) });
   $("mode").textContent = p.mode === "mock" ? "MOCK MODE (offline)" : "LIVE: Comfy Router";
   $("mode").className = "badge " + p.mode;
   $("models").textContent = `${p.image_model} -> ${p.video_model}`;

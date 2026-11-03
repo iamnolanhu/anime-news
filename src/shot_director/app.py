@@ -19,19 +19,28 @@ from pydantic import BaseModel
 
 from . import episode, news, presets, stitch
 from .router_client import (CONTINUATION_ENGINE, ENGINES, IMAGE_MODEL, VIDEO_MODEL, RouterError,
-                            make_router)
+                            clamp_duration, make_router)
 
 ROOT = Path(__file__).resolve().parents[2]
 MEDIA = Path(os.environ.get("SHOT_DIRECTOR_MEDIA", ROOT / "media"))
 MEDIA.mkdir(parents=True, exist_ok=True)
 STATIC = Path(__file__).parent / "static"
-MAX_SHOTS = 3
+
+
+def _max_shots() -> int:
+    try:
+        return max(1, int(os.environ.get("SHOT_DIRECTOR_MAX_SHOTS", "12")))
+    except ValueError:
+        return 12
+
+
+MAX_SHOTS = _max_shots()  # the Studio storyboard holds up to 12 shots across its scenes
 
 app = FastAPI(title="Shot Director")
 app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 router = make_router(MEDIA)
-queue: list[dict] = []  # in-memory shot queue, max 3
+queue: list[dict] = []  # in-memory shot queue, max MAX_SHOTS
 
 
 # -- public deploy: access token + rate limit on mutating routes ---------------------------------
@@ -182,7 +191,9 @@ def generate_shot(req: ShotRequest) -> dict:
         raise HTTPException(502, str(e)) from e
     shot = {"id": name, "url": f"/media/{name}", "body": req.body, "move": req.move,
             "prompt": prompt, "mode": router.mode, "engine": engine,
-            "continued": previous_id is not None, "continued_from": previous_id}
+            "continued": previous_id is not None, "continued_from": previous_id,
+            "frame": req.frame,  # start frame file name, so the storyboard can show shared frames
+            "duration": 2.0 if router.mode == "mock" else float(clamp_duration(engine, None))}
     queue.append(shot)
     return shot
 
@@ -204,16 +215,27 @@ def remove_shot(shot_id: str) -> dict:
     return {"shots": queue}
 
 
+class StitchRequest(BaseModel):
+    order: list[str] | None = None  # shot ids in storyboard order; default = queue order
+
+
 @app.post("/api/stitch", dependencies=[TOKEN])
-def stitch_queue() -> dict:
+def stitch_queue(req: StitchRequest | None = None) -> dict:
     if not queue:
         raise HTTPException(400, "queue is empty: generate a shot first")
+    shots = queue
+    if req and req.order:
+        by_id = {s["id"]: s for s in queue}
+        unknown = [i for i in req.order if i not in by_id]
+        if unknown:
+            raise HTTPException(400, f"not in the queue: {', '.join(unknown)}")
+        shots = [by_id[i] for i in dict.fromkeys(req.order)]
     name = f"sequence-{uuid.uuid4().hex[:8]}.mp4"
     try:
-        stitch.stitch([_media_path(s["id"]) for s in queue], MEDIA / name)
+        stitch.stitch([_media_path(s["id"]) for s in shots], MEDIA / name)
     except RuntimeError as e:
         raise HTTPException(500, str(e)) from e
-    return {"url": f"/media/{name}", "file": name, "shots": len(queue)}
+    return {"url": f"/media/{name}", "file": name, "shots": len(shots)}
 
 
 class EpisodeRequest(BaseModel):

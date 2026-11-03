@@ -2,7 +2,7 @@
 
 Anime News turns the day's top headline into a short anime news episode, and its studio lets you direct single shots by hand. Live at https://your-site.example. The engine and CLI underneath were built as **Shot Director**, its former working name, so the commands (`shot-director`, `shot-director-episode`, `shot-director-cut`), the Python package and the `SHOT_DIRECTOR_*` variables keep that name. Brand rules: THEME.md, "Brand: Anime News".
 
-An open-source mini "Cinema Studio": pick a start frame, a camera body and a camera move, and get an AI video shot. Queue three shots and stitch them into one sequence.
+An open-source mini "Cinema Studio": pick a start frame, a camera body and a camera move, and get an AI video shot. Group shots into scenes on a storyboard (up to 12 shots) and stitch them, in scene order, into one sequence.
 
 Built for **Open Source Higgsfield: ComfyUI Build Night** (NYC, 2026-11-02). Models run through **Comfy Router**: `bfl/flux-3-image` for start frames, **FLUX 3 Video** (`bfl/flux-3-video`) as the default video engine, and LTX 2.5 or MiniMax H3 selectable per shot.
 
@@ -26,8 +26,12 @@ Continuation applies per shot: a FLUX 3 Video shot continues from the last queue
 2. **Camera body:** Modern digital, 35mm film, Super 8, or DV camcorder. Each one adds a look to the prompt.
 3. **Camera move:** Dolly in, Dolly out, Orbit, Crane up, Handheld, Whip pan, Crash zoom, or Static. Each one adds a motion phrase to the prompt.
 4. **Engine:** FLUX 3 Video (default), LTX 2.5 Fast or MiniMax H3, chosen per shot.
-5. **Generate shot:** the compiled prompt (plus the start frame, on models that take one) goes to the video model on Comfy Router. The clip joins a queue of up to 3 shots.
-6. **Stitch:** ffmpeg joins the queued shots into one H.264 mp4.
+5. **Generate shot:** the compiled prompt (plus the start frame, on models that take one) goes to the video model on Comfy Router. The clip joins a queue of up to 12 shots (`SHOT_DIRECTOR_MAX_SHOTS`, default 12).
+6. **Stitch:** ffmpeg joins the queued shots, in storyboard order, into one H.264 mp4.
+
+### Studio storyboard (scenes)
+
+The Studio's **Storyboard** panel sits above the shot queue and groups shots into scenes. Each scene has a title, a one-line set (place, time, light) and a character list; **New scene** adds one and makes it current, and every new shot lands in the current scene (**Shoot here** switches scenes; a select on each card moves a shot to another scene). The panel shows the scene count, shots used and total runtime. Continuity helpers, all client-side: the scene's set and characters lead every shot prompt in that scene; the per-scene toggle **Use scene start frame for every shot** reuses the scene's first start frame as `frame`; FLUX 3 Video continuation stays server-side. A cyan link icon marks shots that continue the previous one or share its start frame. **Storyboard page** opens a printable one-page storyboard (scene rows of shot cards: start frame, move, engine, duration, an editable caption). The storyboard is kept in the browser's localStorage; the server queue stays the source of truth for which shots exist.
 
 | File | Job |
 | --- | --- |
@@ -57,7 +61,7 @@ uv run shot-director
 
 The header badge shows `MOCK MODE` or `LIVE`. `SHOT_DIRECTOR_MOCK=1` forces mock mode even when a key is set.
 
-Optional env: `SHOT_DIRECTOR_VIDEO_MODEL` (default `bfl/flux-3-video`), `SHOT_DIRECTOR_IMAGE_MODEL` (default `bfl/flux-3-image`), `COMFY_ROUTER_BASE` (default `https://api.comfy.org`), `SHOT_DIRECTOR_MEDIA` (default `./media`).
+Optional env: `SHOT_DIRECTOR_VIDEO_MODEL` (default `bfl/flux-3-video`), `SHOT_DIRECTOR_IMAGE_MODEL` (default `bfl/flux-3-image`), `COMFY_ROUTER_BASE` (default `https://api.comfy.org`), `SHOT_DIRECTOR_MEDIA` (default `./media`), `SHOT_DIRECTOR_MAX_SHOTS` (Studio queue size, default `12`).
 
 ## API
 
@@ -66,9 +70,9 @@ Optional env: `SHOT_DIRECTOR_VIDEO_MODEL` (default `bfl/flux-3-video`), `SHOT_DI
 | GET | `/api/presets` | | bodies, moves, engines, mode, model ids |
 | POST | `/api/frame` | multipart `file` | `{frame, url}` |
 | POST | `/api/frame/generate` | `{prompt, body}` | `{frame, url}` |
-| POST | `/api/shot` | `{body, move, scene?, frame?, engine?}` | shot with `engine`, `continued` (409 when 3 are queued, 400 on an unknown engine) |
+| POST | `/api/shot` | `{body, move, scene?, frame?, engine?}` | shot with `engine`, `continued`, `continued_from`, `frame`, `duration` (409 when the queue is full, 400 on an unknown engine) |
 | GET / DELETE | `/api/queue` | | queued shots / clear |
-| POST | `/api/stitch` | | `{url, file, shots}` |
+| POST | `/api/stitch` | `{order?: [shot ids]}` (default: queue order; 400 on an id not in the queue) | `{url, file, shots}` |
 
 ## News → Episode (a self-running anime news channel)
 
@@ -102,7 +106,7 @@ Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one 
 | --- | --- | --- | --- |
 | GET | `/api/news?strategy=viral\|headline` | | `{items: [{title, link, source, published, feed}], strategy}` (10; viral items add `engagement`, `source_text`, `topic`) |
 | POST | `/api/news/refresh` | | 202 `{refreshing: true}`; 409 while a fetch runs; token-gated, rate-limited |
-| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true, news_strategy? = "viral" \| "headline"}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
+| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true, news_strategy? = "viral" \| "headline"}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the Studio queue. |
 | GET | `/api/episodes` | | `{episodes: [ledger entries], auto}` |
 
 **Script writer and style sheet.** Before rendering, the template plan is rewritten by the Router script writer (`writer.py`, one chat-model call, cached per headline in `<media>/scripts-cache.json`, see `docs/WRITER.md`): logline, each scene's setting, caption and narration, each shot's move, caption and prompt. Any writer failure (mock mode, no key, bad reply, wrong counts) keeps the template; the plan's `script` field says which one ran. Anchor-desk scenes (cold open, sign-off, the 1-minute single scene, writer beats `anchor_desk`/`thesis`) take their start frame from the series style sheet (`style.py`, `<media>/style-sheet.png`, made once), so the Anchor and the look stay the same across episodes; crowd and vignette scenes use a plain frame, because the reference copies the Anchor's face onto everyone. `--no-writer` / `"writer": false` and `--no-style-sheet` / `"style_sheet": false` turn them off.
@@ -146,7 +150,7 @@ Run on 2026-11-02 (macOS 13, ffmpeg 7, uv 0.7.8), mock mode, no API key:
 
 ```bash
 uv sync
-uv run shot-director --port 8765 > /tmp/sd_server.log 2>&1 & echo $! > /tmp/sd_server.pid
+SHOT_DIRECTOR_MAX_SHOTS=3 uv run shot-director --port 8765 > /tmp/sd_server.log 2>&1 & echo $! > /tmp/sd_server.pid
 B=http://127.0.0.1:8765
 curl -s $B/api/presets | grep -o '"mode":"[a-z]*"'                     # "mode":"mock"
 F=$(curl -s -X POST $B/api/frame/generate -H 'Content-Type: application/json' \
@@ -154,7 +158,7 @@ F=$(curl -s -X POST $B/api/frame/generate -H 'Content-Type: application/json' \
 curl -s -X POST $B/api/shot -H 'Content-Type: application/json' -d "{\"body\":\"35mm\",\"move\":\"dolly_in\",\"frame\":\"$F\"}"
 curl -s -X POST $B/api/shot -H 'Content-Type: application/json' -d '{"body":"8mm","move":"orbit"}'
 curl -s -X POST $B/api/shot -H 'Content-Type: application/json' -d '{"body":"dv","move":"crash_zoom"}'
-curl -s -X POST $B/api/shot -H 'Content-Type: application/json' -d '{"body":"dv","move":"static"}'   # 409, queue full
+curl -s -X POST $B/api/shot -H 'Content-Type: application/json' -d '{"body":"dv","move":"static"}'   # 409, queue full  (cap set to 3 above; default is 12)
 OUT=$(curl -s -X POST $B/api/stitch | python3 -c 'import sys,json;print(json.load(sys.stdin)["file"])')
 ffprobe -v error -show_entries format=duration:stream=codec_name,width,height -of compact media/$OUT
 #   stream|codec_name=h264|width=1280|height=720

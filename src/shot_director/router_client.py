@@ -44,6 +44,7 @@ TIMEOUT_SECONDS = 660  # Router's sync cutoff is 10 min
 FRAME_ASPECT_RATIO = "16:9"
 FRAME_RESOLUTION = "1k"            # flux-3-image: 768sq | 1k | 1.5k | 2k | 4k
 LTX_DURATION = 4                   # ltx-2-5: 2,3,4,5,6,8,10,12,14,16,18,20
+LTX_ALLOWED = (2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 18, 20)
 LTX_RESOLUTION = "1280x720"
 LTX_FPS = 24                       # 24 | 25 | 48 | 50
 FLUX_VIDEO_DURATION = 5            # flux-3-video: 5-20 s or "auto"
@@ -191,14 +192,15 @@ class LiveRouter:
 
     def generate_clip(self, prompt: str, body: str, move: str, out: Path,
                       frame: Path | None = None, model: str | None = None,
-                      previous_clip: Path | None = None) -> Path:
+                      previous_clip: Path | None = None, duration: int | None = None) -> Path:
         model = model or VIDEO_MODEL
         if model.startswith("ltx/"):
             if frame is not None and not self._warned_ltx_frame:
                 print(f"[shot-director] {model} is text-to-video only on Router: start frame ignored",
                       file=sys.stderr)
                 self._warned_ltx_frame = True
-            req = {"prompt": prompt, "duration": LTX_DURATION, "resolution": LTX_RESOLUTION,
+            ltx_dur = min(LTX_ALLOWED, key=lambda d: abs(d - duration)) if duration else LTX_DURATION
+            req = {"prompt": prompt, "duration": ltx_dur, "resolution": LTX_RESOLUTION,
                    "fps": LTX_FPS, "generate_audio": False}
             result = self._run_model(model, req)
             # LTX output: {"status": pending|processing|completed|failed, "result": {"video_url"}, "error"}
@@ -206,7 +208,8 @@ class LiveRouter:
                 raise RouterError(f"LTX job failed: {self._dig(result, 'error', 'message') or result.get('error')}")
             url = self._dig(result, "result", "video_url")
         elif model == "bfl/flux-3-video":
-            req = {"prompt": prompt, "duration": FLUX_VIDEO_DURATION,
+            req = {"prompt": prompt,
+                   "duration": max(5, min(20, duration)) if duration else FLUX_VIDEO_DURATION,
                    "resolution": FLUX_VIDEO_RESOLUTION, "aspect_ratio": FLUX_VIDEO_ASPECT_RATIO,
                    "generate_audio": False}
             # Raw base64 (no data: prefix) is accepted for keyframes / start_video.
@@ -221,7 +224,8 @@ class LiveRouter:
             url = self._dig(result, "result", "sample")
         elif model == "minimax/minimax-h3":
             content: list[dict] = [{"type": "text", "text": prompt}]
-            req = {"resolution": MINIMAX_RESOLUTION, "duration": MINIMAX_DURATION}
+            req = {"resolution": MINIMAX_RESOLUTION,
+                   "duration": max(4, min(15, duration)) if duration else MINIMAX_DURATION}
             if frame is not None:
                 # image_url.url takes a public URL, mm_file://id, or a data URI.
                 content.append({"type": "image_url", "role": "first_frame",
@@ -259,12 +263,13 @@ class MockRouter:
 
     def generate_clip(self, prompt: str, body: str, move: str, out: Path,
                       frame: Path | None = None, model: str | None = None,
-                      previous_clip: Path | None = None) -> Path:
+                      previous_clip: Path | None = None, duration: int | None = None) -> Path:
         from .presets import CAMERA_BODIES, CAMERA_MOVES
         color = CAMERA_BODIES.get(body, CAMERA_BODIES["modern"])["color"]
         title = f"MOCK {CAMERA_MOVES[move]['label'].upper()}"
         sub = f"{CAMERA_BODIES[body]['label']} - {model or VIDEO_MODEL}"
-        return stitch.mock_clip(title, sub, color, out, frame=frame)
+        return stitch.mock_clip(title, sub, color, out, frame=frame,
+                                seconds=float(duration) if duration else 2.0)
 
 
 def make_router(media_dir: Path):

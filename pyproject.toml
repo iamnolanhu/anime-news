@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 shot-director = "shot_director.app:main"
+shot-director-episode = "shot_director.episode:main"
 
 [build-system]
 requires = ["hatchling"]

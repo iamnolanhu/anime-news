@@ -68,6 +68,54 @@ Optional env: `SHOT_DIRECTOR_VIDEO_MODEL` (default `bfl/flux-3-video`), `SHOT_DI
 | GET / DELETE | `/api/queue` | | queued shots / clear |
 | POST | `/api/stitch` | | `{url, file, shots}` |
 
+## News → Episode (a self-running anime news channel)
+
+Shot Director can direct itself from the news. It pulls the top trending headline (Google News top-stories RSS, falling back to the Hacker News front page; no API key, no X/Twitter), plans an anime satire episode around it, renders it and stitches it into one mp4. Left running, it is a news-directed anime channel in the spirit of @PsyopAnime's anime satire of current events (structure only; see `docs/psyopanime-formula.md`).
+
+**The episode.** A deterministic template, fully offline (no LLM). The spine is an original deadpan Anchor at a desk in front of world-map monitors who reads the headline as a grave briefing line; the cutaways take it literally with absurd props (gravitas vs absurdity is the joke). Scene 1 opens on an extreme close-up of the Anchor's eyes with our series title, `THE HOURLY BRIEFING`. Every prompt leads with "2D cel anime frame, drawn animation, not a photograph" and uses the `anime` camera body (late-80s/90s OVA cel look, heavy ink lines, film grain, VHS softness, teal shadows vs burnt-orange highlights). Each scene carries a `caption` (one short clause) and a `narration` line, each shot its own `caption`, for subtitles and a voiceover track.
+
+**Rule: SFW and no real people's likeness.** Every character is an original archetype; the headline is on-screen text, never a depicted person. No weapons, no gore, no named anime or studio styles, none of PsyopAnime's logo, series names or character designs. `news.top()` skips stories about deaths and violence (satire of a tragedy is not the joke).
+
+**Length.** An episode of N minutes is S scenes × C clips of `--clip-seconds` (default 15; FLUX 3 Video takes 5 to 20 s per clip). Total clips = ceil(N × 60 / clip seconds), at most 4 clips per scene. Clips inside a scene render in order and (FLUX 3 Video, live) each continues from the previous one; scenes render in parallel (`--parallel`, default 3) and are stitched in order. One scene uses the 1-minute beat sheet (cold open, thesis, vignette, punchline); longer episodes are cold open → segments (literal headline, genre-pastiche standoff, rapid montage) → sign-off.
+
+| Minutes | Clips (15 s) | Scenes × clips | Router calls (frames + clips) | Clips rendered back to back (parallel 3) |
+| --- | --- | --- | --- | --- |
+| 1 | 4 | 1 × 4 | 5 | 4 |
+| 2 | 8 | 2 × 4 | 10 | 4 |
+| 3 | 12 | 3 × 4 | 15 | 4 |
+| 5 | 20 | 5 × 4 | 25 | 8 (two waves of scenes) |
+
+Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one clip. A 5 s FLUX 3 Video clip took 1.5 to 2 min live; 15 s clips are not measured yet, so expect several minutes each. A 1-minute episode is therefore tens of minutes, a 5-minute one roughly twice that.
+
+| Method | Path | Body | Returns |
+| --- | --- | --- | --- |
+| GET | `/api/news` | | `{items: [{title, link, source, published, feed}]}` (10) |
+| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
+| GET | `/api/episodes` | | `{episodes: [ledger entries], auto}` |
+
+**CLI** (one episode, or the channel itself):
+
+```bash
+uv run shot-director-episode                                  # top new story -> 1-minute episode
+uv run shot-director-episode --minutes 5                      # target length
+uv run shot-director-episode --headline "Mayor bans Mondays" --mock --out /tmp/ep
+uv run shot-director-episode --loop --every 60m               # self-running: a new story every hour
+# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --mock --out DIR --loop --every
+# one-shot prints the episode mp4 path, then one JSON summary line; --loop prints one JSON line per tick
+```
+
+**Inside the app:** `uv run shot-director --auto` (or `SHOT_DIRECTOR_AUTO=1`) runs the same loop in a background thread; `SHOT_DIRECTOR_AUTO_EVERY` (default `60m`) and `SHOT_DIRECTOR_AUTO_MINUTES` (default `1`) tune it.
+
+**Ledger:** every rendered episode is appended to `episodes.json` in the media dir (`--out`): headline, source, link, file, path, url, minutes, scenes, clips, engine, mode, render seconds, timestamp. The loop skips headlines already in the ledger, so each tick picks the newest story not yet covered.
+
+**Alternative: cron** instead of `--loop`:
+
+```cron
+0 * * * * cd /path/to/shot-director && uv run shot-director-episode >> episodes.log 2>&1
+```
+
+**Prior art:** fal.live / Rehan Sheikh's "infinite interdimensional cable" (chat-directed endless AI TV on MiniMax H3 Max) and levelsio's Infinite Slop run an endless stream steered by viewers or chat. Shot Director is news-directed and episodic instead: one episode per story, hourly or daily, with cinematography presets and shot-to-shot continuity, open source on ComfyUI's Router.
+
 ## Live-mode notes (Comfy Router, verified 2026-11-02)
 
 - Pick the video model with `SHOT_DIRECTOR_VIDEO_MODEL` (or `engine` per `/api/shot` request; `model` still works as an alias): `ltx/ltx-2-5-fast`, `ltx/ltx-2-5-pro`, `bfl/flux-3-video`, `minimax/minimax-h3`. Anything else is rejected as unsupported.

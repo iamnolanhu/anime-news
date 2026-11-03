@@ -25,6 +25,11 @@ CAMERA_BODIES: dict[str, dict[str, str]] = {
         "fragment": "shot on a 2000s DV camcorder, interlaced video, low dynamic range, slight blur, timestamp-era look",
         "color": "0x2e4a2e",
     },
+    "anime": {
+        "label": "Anime (90s OVA cel)",
+        "fragment": "2D cel anime, not a photograph: late-1980s and 1990s OVA cel look, hand-inked heavy black linework, hatching on faces, flat painted backgrounds, limited animation at 24 fps, film grain, slight VHS softness, teal shadows with burnt orange and red highlights, high-contrast dramatic lighting, speed lines",
+        "color": "0x3a1a5a",
+    },
 }
 
 CAMERA_MOVES: dict[str, dict[str, str]] = {

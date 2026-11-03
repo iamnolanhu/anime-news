@@ -1,0 +1,371 @@
+"""News -> anime episode: plan, render and stitch an episode from one headline; the self-running loop.
+
+The plan is a deterministic template (no LLM, fully offline). Rules baked into every prompt:
+SFW, no real people's likeness. Characters are original archetypes (the Anchor, invented officials); the
+headline appears as on-screen text in the world (tickers, holograms), never as a depicted person.
+Structure and prompt wording follow docs/psyopanime-formula.md (structure only, none of their IP).
+
+Length: an episode of N minutes is S scenes x C clips of `clip_seconds` each. Clips inside a scene
+are rendered in order and (FLUX 3 Video, live) each continues from the previous one; scenes render
+in parallel. Scenes are concatenated in order into one mp4.
+"""
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import sys
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+
+from . import news, presets, stitch
+from .router_client import CONTINUATION_ENGINE, ENGINES, VIDEO_MODEL
+
+ROOT = Path(__file__).resolve().parents[2]
+MAX_HEADLINE = 140
+MAX_CLIPS_PER_SCENE = 4      # continuity chain length inside one scene
+DEFAULT_MINUTES = 1.0
+DEFAULT_CLIP_SECONDS = 15    # flux-3-video takes 5-20 s per clip
+DEFAULT_PARALLEL = 3         # scenes rendered at once
+LEDGER_NAME = "episodes.json"
+KNOWN_ENGINES = {e["id"] for e in ENGINES} | {VIDEO_MODEL, "ltx/ltx-2-5-pro"}
+
+SERIES_TITLE = "THE HOURLY BRIEFING"  # our own series name (never theirs)
+STYLE_LEAD = "2D cel anime frame, drawn animation, not a photograph, not a 3D render"
+_SAFETY = ("Safe for work, no weapons, no gore. No real people, no real faces, no likeness of any "
+           "public figure; every character is an original invented archetype")
+# Fixed character block, reused in every prompt for consistency (original design).
+_ANCHOR = ("the Anchor, an original stern middle-aged news anchor with a silver crew cut, round "
+           "glasses and a gold-trimmed black blazer, drawn with heavy inked lines")
+_DESK = (f"{_ANCHOR}, seated at a long news desk in front of a wall of glowing world-map monitors "
+         "showing invented countries")
+
+_LOGLINES = [
+    "{title}: the Anchor reads \"{h}\" with total gravitas, and the cutaways take it literally.",
+    "{title}: \"{h}\", briefed like a war-room emergency and illustrated with absurd props.",
+    "{title}: one deadpan anchor, one headline, \"{h}\", and a world that overreacts on cue.",
+]
+
+# Scene templates follow the 1- and 5-minute beat sheets in docs/psyopanime-formula.md.
+# Each beat: (beat, move, picture, caption). Captions are one short clause (<= 8 words).
+_SCENES = {
+    "single": {
+        "setting": "an anime newsroom at night, teal shadows, burnt orange monitor glow",
+        "narration": "Good evening. Tonight: {h}. Experts call it unprecedented. Experts call everything unprecedented. Back in one hour.",
+        "beats": [
+            ("cold_open", "crash_zoom", "Extreme close-up of the Anchor's eyes behind round glasses, the title '" + SERIES_TITLE + "' slams across the frame", SERIES_TITLE),
+            ("thesis", "dolly_in", "Slow push-in on " + _DESK + "; the monitors all read \"{h}\" as he delivers it as a grave briefing", "Tonight: {short}"),
+            ("vignette", "handheld", "Cutaway that literalizes the headline with an absurd oversized prop on a war-room table, invented officials staring at it in silence", "Officials are reviewing the situation."),
+            ("punchline", "static", "Back at the desk: the Anchor stares into the lens, completely deadpan, one monitor glitching on \"{h}\"", "Back in one hour."),
+        ],
+    },
+    "cold_open": {
+        "setting": "an anime news studio in darkness lit by monitors, teal shadows, burnt orange highlights",
+        "narration": "Good evening. This is " + SERIES_TITLE + ". Tonight: {h}.",
+        "beats": [
+            ("cold_open", "crash_zoom", "Extreme close-up of the Anchor's eyes behind round glasses, the title '" + SERIES_TITLE + "' slams across the frame", SERIES_TITLE),
+            ("anchor_intro", "static", _DESK + "; every monitor reads \"{h}\"", "Tonight: {short}"),
+            ("anchor_push", "dolly_in", "Slow push-in on the Anchor as he delivers the headline as a grave briefing line", "This is not a drill."),
+            ("crt_inset", "whip_pan", "Whip pan to a wall of old CRT monitors replaying \"{h}\" with glitch and scan lines", "Footage is coming in."),
+        ],
+    },
+    "segment_a": {
+        "setting": "a vast painted sunset sky over an invented capital city, teal shadows, burnt orange clouds",
+        "narration": "Sources confirm it: {h}. Nobody was ready. Least of all the people in charge.",
+        "beats": [
+            ("establishing", "crane_up", "Wide establishing view of the invented capital; giant screens on every tower read \"{h}\"", "Sources confirm it."),
+            ("face", "crash_zoom", "Crash zoom onto the face of an invented stern official archetype, sweat on his brow, hatching on his face", "Nobody was ready."),
+            ("cutaway", "handheld", "Invented staffers sprint down a corridor carrying armfuls of paperwork about \"{h}\"", "Least of all them."),
+            ("absurd_prop", "static", "Overhead view of a war-room table covered in pizza boxes and one absurd prop that literalizes the headline", "The situation room is ready."),
+        ],
+    },
+    "segment_b": {
+        "setting": "a dusty western main street at high noon, painted sky, teal shadows, burnt orange dust",
+        "narration": "Experts call it unprecedented. Experts call everything unprecedented. The standoff continues.",
+        "beats": [
+            ("standoff", "orbit", "Two invented rival bureaucrats face off in a western standoff, each holding a giant rubber stamp instead of a weapon", "A standoff begins."),
+            ("tumbleweed", "static", "A tumbleweed rolls past a wanted poster that reads \"{h}\"", "Experts call it unprecedented."),
+            ("clash", "whip_pan", "Whip pan as the rubber stamps slam down on the same form at once, white flash, speed lines", "They call everything unprecedented."),
+            ("aftermath", "dolly_out", "Pull back: the whole town is buried in stamped paperwork", "The standoff continues."),
+        ],
+    },
+    "montage": {
+        "setting": "a rapid montage across the invented city at night, CRT glow, teal and burnt orange",
+        "narration": "The markets reacted. The pigeons reacted. Everyone reacted.",
+        "beats": [
+            ("market", "handheld", "A stock ticker board in the invented city flips wildly, every line reads \"{h}\"", "The markets reacted."),
+            ("pigeons", "whip_pan", "A flock of pigeons scatters off a news screen showing the headline, speed lines", "The pigeons reacted."),
+            ("crowd", "crash_zoom", "Crash zoom on a crowd of invented citizens gasping in exaggerated anime shock", "Everyone reacted."),
+            ("glitch", "handheld", "Glitching CRT monitors stacked in a shop window, all replaying \"{h}\"", "Stay tuned."),
+        ],
+    },
+    "sign_off": {
+        "setting": "the anime news studio, teal shadows, burnt orange monitor glow",
+        "narration": "That was {h}. It will happen again. We will be here. Back in one hour.",
+        "beats": [
+            ("sign_off", "static", _DESK + "; he folds his hands, perfectly deadpan", "That was the news."),
+            ("moral", "dolly_in", "Slow push-in as the Anchor delivers one dry closing line, a single monitor behind him still reading \"{h}\"", "It will happen again."),
+            ("lights", "crane_up", "Crane up over the desk as the studio lights click off one by one", "We will be here."),
+            ("sting", "dolly_out", "Extreme close-up of the Anchor's eyes pulling back, the card 'NEXT HOUR' appears", "Back in one hour."),
+        ],
+    },
+}
+_MIDDLE_SCENES = ["segment_a", "segment_b", "montage"]
+
+
+def _clean(headline: str) -> str:
+    h = " ".join((headline or "").split()).replace('"', "'")
+    return h[:MAX_HEADLINE].rstrip() + ("..." if len(h) > MAX_HEADLINE else "")
+
+
+def _short(h: str, words: int = 6) -> str:
+    w = h.split()
+    return " ".join(w[:words]) + ("..." if len(w) > words else "")
+
+
+def _pick(seed: str, options: list, salt: str):
+    """Stable choice per headline (hashlib, not hash(), so it survives restarts)."""
+    digest = hashlib.sha256(f"{salt}:{seed}".encode()).digest()
+    return options[digest[0] % len(options)]
+
+
+def layout(minutes: float, clip_seconds: int = DEFAULT_CLIP_SECONDS) -> tuple[int, int]:
+    """Minutes -> (scenes, clips per scene). Total clips = ceil(minutes*60 / clip_seconds)."""
+    if minutes <= 0 or clip_seconds <= 0:
+        raise ValueError("minutes and clip_seconds must be positive")
+    total = max(1, math.ceil(minutes * 60 / clip_seconds))
+    scenes = math.ceil(total / MAX_CLIPS_PER_SCENE)
+    return scenes, math.ceil(total / scenes)
+
+
+def _scene_kinds(n: int) -> list[str]:
+    """1 scene = the 1-minute sheet; more = cold open, middle segments in rotation, sign-off."""
+    if n == 1:
+        return ["single"]
+    return ["cold_open"] + [_MIDDLE_SCENES[i % len(_MIDDLE_SCENES)] for i in range(n - 2)] + ["sign_off"]
+
+
+def _trim(beats: list, count: int) -> list:
+    """Fit a 4-beat template to `count` clips, keeping the opening and the closing beat."""
+    if count >= len(beats):
+        return beats
+    return beats[:1] if count == 1 else beats[:count - 1] + beats[-1:]
+
+
+def plan_episode(headline: str, source: str = "", body: str = "anime",
+                 minutes: float = DEFAULT_MINUTES, clip_seconds: int = DEFAULT_CLIP_SECONDS) -> dict:
+    """Headline -> {headline, source, series, logline, scene, minutes, clip_seconds,
+    scenes: [{index, kind, setting, scene, caption, narration,
+              shots: [{beat, move, body, scene, caption}]}], shots: (flat list)}."""
+    h = _clean(headline)
+    if not h:
+        raise ValueError("headline is empty")
+    n_scenes, per_scene = layout(minutes, clip_seconds)
+    fill = {"h": h, "short": _short(h)}
+    scenes = []
+    for i, kind in enumerate(_scene_kinds(n_scenes)):
+        tpl = _SCENES[kind]
+        shots = [{"beat": beat, "move": move, "body": body, "caption": caption.format(**fill),
+                  "scene": f"{STYLE_LEAD}. {tpl['setting'].capitalize()}. {picture.format(**fill)}. {_SAFETY}"}
+                 for beat, move, picture, caption in _trim(tpl["beats"], per_scene)]
+        scenes.append({"index": i + 1, "kind": kind, "setting": tpl["setting"],
+                       "scene": shots[0]["scene"],  # the start frame shows the scene's first beat
+                       "caption": shots[0]["caption"], "narration": tpl["narration"].format(**fill),
+                       "shots": shots})
+    return {"headline": h, "source": source.strip(), "series": SERIES_TITLE,
+            "logline": _pick(h, _LOGLINES, "logline").format(h=h, title=SERIES_TITLE),
+            "scene": scenes[0]["scene"], "minutes": minutes, "clip_seconds": clip_seconds,
+            "scenes": scenes, "shots": [s for sc in scenes for s in sc["shots"]]}
+
+
+# -- rendering ---------------------------------------------------------------------------------
+
+def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_seconds: int) -> dict:
+    """One start frame, then the scene's clips in order; FLUX 3 Video (live) continues clip to clip."""
+    frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
+    router.generate_frame(f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}.", body,
+                          media / frame_name)
+    records, previous = [], None
+    for s in sc["shots"]:
+        prompt = presets.compile_prompt(body, s["move"], s["scene"])
+        name = f"shot-{uuid.uuid4().hex[:8]}.mp4"
+        extra = {}
+        if router.mode == "live" and engine == CONTINUATION_ENGINE and previous:
+            extra["previous_clip"] = media / previous
+        router.generate_clip(prompt, body, s["move"], media / name, frame=media / frame_name,
+                             model=engine, duration=clip_seconds, **extra)
+        records.append({"id": name, "url": f"/media/{name}", "beat": s["beat"], "caption": s["caption"], "body": body,
+                        "move": s["move"], "prompt": prompt, "mode": router.mode, "engine": engine,
+                        "continued": "previous_clip" in extra, "continued_from": previous if extra else None})
+        previous = name
+    return {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
+            "narration": sc["narration"],
+            "frame": {"frame": frame_name, "url": f"/media/{frame_name}"}, "shots": records}
+
+
+def render_episode(plan: dict, router, media: Path, body: str = "anime", engine: str | None = None,
+                   parallel: int = DEFAULT_PARALLEL) -> dict:
+    """Render every scene (scenes in parallel), stitch them in order. Uses its own shot list, not the UI queue."""
+    engine = engine or VIDEO_MODEL
+    if engine not in KNOWN_ENGINES:
+        raise ValueError(f"unknown engine: {engine}")
+    media.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        scenes = list(pool.map(lambda sc: _render_scene(router, media, sc, body, engine,
+                                                        plan["clip_seconds"]), plan["scenes"]))
+    shots = [s for sc in scenes for s in sc["shots"]]
+    name = f"episode-{uuid.uuid4().hex[:8]}.mp4"
+    stitch.stitch([media / s["id"] for s in shots], media / name)
+    return {**plan, "scenes": scenes, "shots": shots, "frame": scenes[0]["frame"],
+            "sequence": {"url": f"/media/{name}", "file": name}}
+
+
+# -- ledger + one production run --------------------------------------------------------------
+
+_LEDGER_LOCK = threading.Lock()
+
+
+def read_ledger(media: Path) -> list[dict]:
+    try:
+        return json.loads((media / LEDGER_NAME).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _append_ledger(media: Path, entry: dict) -> None:
+    with _LEDGER_LOCK:
+        items = read_ledger(media) + [entry]
+        tmp = media / f".{LEDGER_NAME}.tmp"
+        tmp.write_text(json.dumps(items, indent=1))
+        tmp.replace(media / LEDGER_NAME)
+
+
+def produce(router, media: Path, headline: str | None = None, source: str = "",
+            engine: str | None = None, body: str = "anime", minutes: float = DEFAULT_MINUTES,
+            clip_seconds: int = DEFAULT_CLIP_SECONDS, parallel: int = DEFAULT_PARALLEL,
+            render: bool = True) -> dict:
+    """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
+    Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
+    headline = (headline or "").strip()
+    link = ""
+    if not headline:
+        story = news.top(exclude={e["headline_raw"] for e in read_ledger(media) if e.get("headline_raw")})
+        if not story:
+            raise LookupError("no new trending headline (feeds unreachable or all rendered): pass a headline")
+        headline, source, link = story["title"], story.get("source", ""), story.get("link", "")
+    presets.compile_prompt(body, "static", "")  # validates the body before anything is spent
+    if engine and engine not in KNOWN_ENGINES:
+        raise ValueError(f"unknown engine: {engine}")
+    plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds)
+    if not render:
+        return plan
+    started = time.time()
+    result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel)
+    _append_ledger(media, {
+        "headline": result["headline"], "headline_raw": headline, "source": source, "link": link,
+        "file": result["sequence"]["file"], "path": str(media / result["sequence"]["file"]),
+        "url": result["sequence"]["url"], "minutes": minutes, "scenes": len(result["scenes"]),
+        "clips": len(result["shots"]), "engine": result["shots"][0]["engine"], "mode": router.mode,
+        "seconds_to_render": round(time.time() - started, 1),
+        "created": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    return result
+
+
+def parse_every(text: str) -> float:
+    """'60m', '1h', '90s' or a bare number of minutes -> seconds."""
+    t = str(text).strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600}
+    if t and t[-1] in units:
+        return float(t[:-1]) * units[t[-1]]
+    return float(t) * 60
+
+
+def run_loop(router, media: Path, every_seconds: float, stop: threading.Event | None = None,
+             log=print, **kwargs) -> None:
+    """Self-running channel: every tick, render the current top story not already in the ledger."""
+    stop = stop or threading.Event()
+    while not stop.is_set():
+        started = time.time()
+        try:
+            r = produce(router, media, **kwargs)
+            log(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ok": True,
+                            "headline": r["headline"], "episode": str(media / r["sequence"]["file"]),
+                            "scenes": len(r["scenes"]), "clips": len(r["shots"]), "mode": router.mode}))
+        except Exception as e:  # one bad tick must not stop the channel
+            log(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "ok": False,
+                            "error": f"{type(e).__name__}: {e}"}))
+        stop.wait(max(0.0, every_seconds - (time.time() - started)))
+
+
+# -- CLI -----------------------------------------------------------------------------------------
+
+def _load_repo_env_key() -> None:
+    """Put COMFY_API_KEY from the repo .env into the environment if it is not already set. Never printed."""
+    if os.environ.get("COMFY_API_KEY"):
+        return
+    env = ROOT / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text().splitlines():
+        line = line.strip().removeprefix("export ").strip()
+        if line.startswith("COMFY_API_KEY="):
+            os.environ["COMFY_API_KEY"] = line.split("=", 1)[1].strip().strip("'\"")
+            return
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Pick the top trending story, plan an anime episode, render it and stitch it.")
+    ap.add_argument("--headline", help="use this headline instead of the top trending story")
+    ap.add_argument("--source", default="", help="source name shown with --headline")
+    ap.add_argument("--engine", default=None, help="video engine id (default: bfl/flux-3-video)")
+    ap.add_argument("--body", default="anime", help="camera body preset (default: anime)")
+    ap.add_argument("--minutes", type=float, default=DEFAULT_MINUTES, help="episode length (default 1)")
+    ap.add_argument("--clip-seconds", type=int, default=DEFAULT_CLIP_SECONDS,
+                    help="seconds per clip (default 15; FLUX 3 Video 5-20)")
+    ap.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="scenes rendered at once (default 3)")
+    ap.add_argument("--mock", action="store_true", help="offline placeholder render, no Router calls")
+    ap.add_argument("--out", default=str(ROOT / "media"), help="media dir for frames, clips, episodes and the ledger")
+    ap.add_argument("--loop", action="store_true", help="keep running: one new episode every --every")
+    ap.add_argument("--every", default="60m", help="loop interval, e.g. 60m, 1h, 30s (default 60m)")
+    args = ap.parse_args()
+
+    if args.mock:
+        os.environ["SHOT_DIRECTOR_MOCK"] = "1"
+    else:
+        _load_repo_env_key()
+    from .router_client import make_router
+    media = Path(args.out).resolve()
+    media.mkdir(parents=True, exist_ok=True)
+    router = make_router(media)
+    opts = dict(engine=args.engine, body=args.body, minutes=args.minutes,
+                clip_seconds=args.clip_seconds, parallel=args.parallel)
+    if args.loop:
+        print(f"[shot-director] {router.mode} channel: one episode every {args.every} into {media}",
+              file=sys.stderr)
+        try:
+            run_loop(router, media, parse_every(args.every), log=lambda line: print(line, flush=True), **opts)
+        except KeyboardInterrupt:
+            pass
+        return
+    try:
+        result = produce(router, media, headline=args.headline, source=args.source, **opts)
+    except Exception as e:
+        print(f"episode failed: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)
+    path = media / result["sequence"]["file"]
+    print(path)
+    print(json.dumps({"headline": result["headline"], "source": result["source"],
+                      "logline": result["logline"], "mode": router.mode,
+                      "engine": result["shots"][0]["engine"], "scenes": len(result["scenes"]),
+                      "clips": len(result["shots"]), "moves": [s["move"] for s in result["shots"]],
+                      "episode": str(path)}))
+
+
+if __name__ == "__main__":
+    main()

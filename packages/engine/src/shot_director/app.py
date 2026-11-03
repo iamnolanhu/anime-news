@@ -12,6 +12,7 @@ import argparse
 from contextlib import asynccontextmanager
 import hashlib
 import hmac
+import json
 import os
 import re
 import sys
@@ -184,10 +185,14 @@ class EpisodeRequest(BaseModel):
 # -- render jobs ----------------------------------------------------------------------------------
 
 class Jobs:
-    """Render jobs on background threads; jobs live in memory. Up to `max_parallel` run at once and the rest wait
-    in a queue (the local engine runs one and answers 409 instead of queueing; see post_render)."""
+    """Render jobs on background threads. Up to `max_parallel` run at once and the rest wait in a queue (the local
+    engine runs one and answers 409 instead of queueing; see post_render). With a `path` (hosted mode) every
+    transition is also saved there, so a restart can still answer for the jobs it interrupted."""
 
-    def __init__(self, max_parallel: int = 1) -> None:
+    KEEP_SAVED = 200
+
+    def __init__(self, max_parallel: int = 1, path: Path | None = None) -> None:
+        self.path = path
         self.lock = threading.Lock()
         self.jobs: dict[str, dict] = {}
         self.cancels: dict[str, threading.Event] = {}
@@ -211,6 +216,60 @@ class Jobs:
     def update(self, job_id: str, **fields) -> None:
         with self.lock:
             self.jobs[job_id].update(fields)
+            self._save()
+
+    def register(self, job_id: str, job: dict) -> None:
+        """Add a job (caller holds self.lock)."""
+        self.jobs[job_id] = job
+        self._save()
+
+    def take_charge(self, job_id: str) -> dict | None:
+        """Hand out a job's charge exactly once (to refund it); None when already refunded or settled."""
+        with self.lock:
+            j = self.jobs.get(job_id)
+            charged = j.pop("_charged", None) if j else None
+            if charged:
+                self._save()
+        return charged
+
+    def _save(self) -> None:
+        """Write every job (newest KEEP_SAVED) to jobs.json. Caller holds self.lock. Never raises: a full disk
+        must not fail a render."""
+        if not self.path:
+            return
+        try:
+            newest = sorted(self.jobs.values(), key=lambda j: j.get("started", ""))[-self.KEEP_SAVED:]
+            tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps(newest, indent=1))
+            tmp.replace(self.path)
+        except OSError as e:
+            print(f"[jobs] could not save {self.path}: {e}", file=sys.stderr)
+
+    def load_interrupted(self, usage: "hosted.Usage") -> int:
+        """At startup: load saved jobs. One that was queued or running died with the old process: mark it failed
+        ('interrupted') and, when no shot had finished, give the visitor their charge back. Returns the number
+        interrupted."""
+        if not self.path:
+            return 0
+        try:
+            saved = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return 0
+        n = 0
+        with self.lock:
+            for j in saved if isinstance(saved, list) else []:
+                if not isinstance(j, dict) or not j.get("job_id"):
+                    continue
+                if j.get("status") not in ("done", "failed"):
+                    j.update(status="failed", stage="failed", error="interrupted")
+                    n += 1
+                    ch = j.get("_charged")
+                    if ch and not j.get("done"):
+                        usage.refund_hashed(ch["who"], ch["kind"], ch["usd"], ch.get("day"))
+                    j.pop("_charged", None)   # refunded, or the work started and the charge stands: settled either way
+                self.jobs[j["job_id"]] = j
+            self._save()
+        return n
 
     def submit(self, job_id: str, fn) -> None:
         """Start `fn` now when a slot is free, else queue it (call with the job already registered)."""
@@ -285,6 +344,7 @@ def create_app(media: Path | None = None) -> FastAPI:
     media.mkdir(parents=True, exist_ok=True)
     is_hosted = hosted.enabled()
     usage = hosted.Usage(media)
+    episode.reconcile_interrupted(media)   # ledger entries still 'rendering' belong to a process that is gone
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -293,7 +353,9 @@ def create_app(media: Path | None = None) -> FastAPI:
 
     app = FastAPI(title="Anime News engine", version=_version(), lifespan=lifespan)
     app.state.media = media
-    jobs = Jobs(hosted.limits()["max_parallel_jobs"] if is_hosted else 1)
+    jobs = Jobs(hosted.limits()["max_parallel_jobs"] if is_hosted else 1,
+                media / hosted.JOBS_FILE if is_hosted else None)
+    jobs.load_interrupted(usage)
     app.state.jobs = jobs
 
     @app.exception_handler(AccessDenied)
@@ -429,8 +491,9 @@ def create_app(media: Path | None = None) -> FastAPI:
             if shot_s > max_s:
                 raise HTTPException(400, f"this storyboard has {shot_s} s of shots; the shared demo engine renders up "
                                          f"to {max_s:g} s. Remove some shots, or run your own engine")
-            charged = (visitor(request), "renders", est["usd"])
-            charged = (*charged, usage.charge(*charged))   # + the day it was charged, for a refund
+            who = hosted.Usage._who(visitor(request))
+            charged = {"who": who, "kind": "renders", "usd": est["usd"],
+                       "day": usage.charge(visitor(request), "renders", est["usd"])}   # the day, for a refund
         base = media_base(request)
         total = sum(len(sc["shots"]) for sc in sb["scenes"])
         job_id = uuid.uuid4().hex[:12]
@@ -439,17 +502,25 @@ def create_app(media: Path | None = None) -> FastAPI:
             if not is_hosted and jobs.active:
                 raise HTTPException(409, f"a render is already running (job {next(iter(jobs.active))})")
             jobs.cancels[job_id] = cancel
-            jobs.jobs[job_id] = {"job_id": job_id, "status": "queued", "stage": "queued", "done": 0, "total": total,
+            jobs.register(job_id, {"job_id": job_id, "status": "queued", "stage": "queued", "done": 0, "total": total,
                                  "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                  "mode": router.mode, "quality": quality, "estimate_usd": est["usd"],
-                                 "_charged": charged}
+                                 "_charged": charged})
 
         def progress(stage: str, done: int, n: int) -> None:
             jobs.update(job_id, status="cutting" if stage == "cutting" else "rendering", stage=stage, done=done, total=n)
 
+        def refund_if_no_shot_done() -> None:
+            # a job that dies before its first finished shot produced nothing: give the charge back
+            with jobs.lock:
+                done_shots = jobs.jobs[job_id].get("done", 0)
+            if not done_shots and (ch := jobs.take_charge(job_id)):
+                usage.refund_hashed(ch["who"], ch["kind"], ch["usd"], ch.get("day"))
+
         def run() -> None:
             if cancel.is_set():
                 jobs.update(job_id, status="failed", stage="failed", error="cancelled")
+                refund_if_no_shot_done()
                 return
             jobs.update(job_id, status="rendering", stage="starting")
             try:
@@ -464,6 +535,7 @@ def create_app(media: Path | None = None) -> FastAPI:
             except BaseException as e:  # noqa: BLE001 - the job records it
                 jobs.update(job_id, status="failed", stage="failed",
                             error="cancelled" if isinstance(e, rs.Cancelled) else f"{type(e).__name__}: {str(e)[:300]}")
+                refund_if_no_shot_done()
 
         jobs.submit(job_id, run)
         return JSONResponse({"job_id": job_id, "estimate_usd": est["usd"], "mode": router.mode, "quality": quality},
@@ -484,11 +556,9 @@ def create_app(media: Path | None = None) -> FastAPI:
             raise HTTPException(404, f"no such job: {job_id}")
         ev.set()  # best effort: shots already sent to the Router finish; nothing new starts
         if jobs.drop_queued(job_id):
-            with jobs.lock:
-                charged = jobs.jobs[job_id].get("_charged")
             jobs.update(job_id, status="failed", stage="failed", error="cancelled")
-            if charged:
-                usage.refund(*charged)
+            if charged := jobs.take_charge(job_id):
+                usage.refund_hashed(charged["who"], charged["kind"], charged["usd"], charged.get("day"))
         return {"cancelled": True}
 
     @app.get("/api/weekly")

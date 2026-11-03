@@ -91,7 +91,11 @@ def test_private_urls_are_not_fetched(tmp_path):
 
 def test_per_ip_render_limit(tmp_path, monkeypatch):
     monkeypatch.setenv("ANIME_NEWS_IP_RENDERS_PER_DAY", "2")
-    monkeypatch.setattr(rs, "render", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("not in this test")))
+
+    def one_shot_then_fail(sb, router, media, progress=None, **k):   # a late failure keeps the charge
+        progress("shots", 1, 4)
+        raise RuntimeError("not in this test")
+    monkeypatch.setattr(rs, "render", one_shot_then_fail)
     c = client(tmp_path)
     sb = storyboard(c)
     for _ in range(2):
@@ -440,3 +444,113 @@ def test_pose_reference_outside_the_media_dir_is_ignored(tmp_path):
     assert rs.pose_ref_path(tmp_path, "/etc/hosts") is None
     assert rs.pose_ref_path(tmp_path, "../../etc/hosts") is None
     assert rs.pose_ref_path(tmp_path, "") is None
+
+
+# -- restarts and early failures: stale ledger entries, saved jobs, refunds ------------------------------
+
+from datetime import datetime, timedelta, timezone
+
+from shot_director import episode
+
+
+def _iso(delta: timedelta) -> str:
+    return (datetime.now(timezone.utc) - delta).isoformat(timespec="seconds")
+
+
+def _ledger_with(media, *entries):
+    media.mkdir(parents=True, exist_ok=True)
+    (media / episode.LEDGER_NAME).write_text(json.dumps(list(entries)))
+
+
+def test_stale_rendering_entry_is_reconciled_on_startup(tmp_path):
+    media = tmp_path / "media"
+    _ledger_with(media, {"id": "old1", "status": "rendering", "headline_raw": "Mayor bans Mondays",
+                         "created": _iso(timedelta(minutes=5))},
+                 {"id": "ok1", "status": "done", "headline_raw": "Other", "created": _iso(timedelta(days=1))})
+    with pytest.raises(LookupError):
+        episode._reserve(media, "Mayor bans Mondays", "")   # before the restart: still "rendering"
+    app_module.create_app(media)                              # the restart
+    ledger = {e["id"]: e for e in episode.read_ledger(media)}
+    assert ledger["old1"]["status"] == "failed" and ledger["old1"]["error"] == "interrupted"
+    assert ledger["ok1"]["status"] == "done"
+    episode._reserve(media, "Mayor bans Mondays", "")         # renderable again
+
+
+def test_reserve_ignores_rendering_entries_older_than_two_hours(tmp_path):
+    media = tmp_path / "media"
+    _ledger_with(media, {"id": "dead", "status": "rendering", "headline_raw": "Old story",
+                         "created": _iso(timedelta(hours=2, minutes=1))},
+                 {"id": "live", "status": "rendering", "headline_raw": "Fresh story",
+                  "created": _iso(timedelta(minutes=30))})
+    episode._reserve(media, "Old story", "")
+    with pytest.raises(LookupError, match="already rendering"):
+        episode._reserve(media, "Fresh story", "")
+
+
+def _left(c):
+    return c.get("/api/health", headers=AUTH).json()["budget_remaining_usd"]
+
+
+def test_queued_job_saved_before_a_restart_is_failed_and_refunded(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIME_NEWS_MAX_PARALLEL_JOBS", "1")
+    monkeypatch.setattr(rs, "estimate", lambda *a, **k: {"usd": 3.88, "parts": {}})
+    gate = threading.Event()
+    monkeypatch.setattr(rs, "render", lambda *a, **k: gate.wait(10) and (_ for _ in ()).throw(RuntimeError("x")))
+    c = client(tmp_path)
+    sb = storyboard(c)
+    try:
+        c.post("/api/render", json={"storyboard": sb}, headers=AUTH)
+        queued = c.post("/api/render", json={"storyboard": sb}, headers=AUTH).json()["job_id"]
+        assert c.get(f"/api/jobs/{queued}", headers=AUTH).json()["status"] == "queued"
+        saved = json.loads((tmp_path / "media" / hosted.JOBS_FILE).read_text())
+        mine = next(j for j in saved if j["job_id"] == queued)
+        assert mine["status"] == "queued" and mine["_charged"]["usd"] == 3.88 and "203.0.113.7" not in json.dumps(saved)
+        before = _left(c)
+        assert before == pytest.approx(40.0 - 0.1 - 2 * 3.88)
+        c2 = client(tmp_path)                                  # simulated restart: a new app on the same media dir
+        job = c2.get(f"/api/jobs/{queued}", headers=AUTH).json()
+        assert job["status"] == "failed" and job["error"] == "interrupted"
+        assert _left(c2) == pytest.approx(before + 2 * 3.88)   # both unfinished jobs refunded
+        assert c2.get("/api/health", headers=AUTH).json()["remaining_for_you"] == 3
+        assert _left(client(tmp_path)) == pytest.approx(_left(c2))   # a second restart refunds nothing more
+    finally:
+        gate.set()
+
+
+def _wait_finished(c, job_id):
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        j = c.get(f"/api/jobs/{job_id}", headers=AUTH).json()
+        if j["status"] in ("failed", "done"):
+            return j
+        time.sleep(0.05)
+    raise AssertionError("job never finished")
+
+
+def test_failure_before_the_first_shot_refunds_the_charge(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "estimate", lambda *a, **k: {"usd": 3.88, "parts": {}})
+    monkeypatch.setattr(rs, "render", lambda *a, **k: (_ for _ in ()).throw(LookupError("already rendering: x")))
+    c = client(tmp_path)
+    sb = storyboard(c)
+    start = _left(c)
+    job = _wait_finished(c, c.post("/api/render", json={"storyboard": sb}, headers=AUTH).json()["job_id"])
+    assert job["status"] == "failed" and job["done"] == 0
+    assert _left(c) == pytest.approx(start)
+    assert c.get("/api/health", headers=AUTH).json()["remaining_for_you"] == 3
+
+
+def test_failure_after_a_finished_shot_keeps_the_charge(tmp_path, monkeypatch):
+    monkeypatch.setattr(rs, "estimate", lambda *a, **k: {"usd": 3.88, "parts": {}})
+
+    def half_render(sb, router, media, progress=None, **k):
+        progress("shots", 1, 4)
+        raise RuntimeError("shot 2 failed")
+    monkeypatch.setattr(rs, "render", half_render)
+    c = client(tmp_path)
+    sb = storyboard(c)
+    start = _left(c)
+    job = _wait_finished(c, c.post("/api/render", json={"storyboard": sb}, headers=AUTH).json()["job_id"])
+    assert job["status"] == "failed" and job["done"] == 1
+    assert _left(c) == pytest.approx(start - 3.88)
+    assert c.get("/api/health", headers=AUTH).json()["remaining_for_you"] == 2
+    assert _left(client(tmp_path)) == pytest.approx(start - 3.88)   # a restart does not refund it either

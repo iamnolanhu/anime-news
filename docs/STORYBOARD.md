@@ -39,12 +39,12 @@ storyboard is checked by the same rules as the writer's reply.
 | `scenes[].setting` | where the scene happens; added to every frame prompt of the scene |
 | `scenes[].caption` | the scene's one-line summary (60 chars max); the cut draws no caption over wordless pictures (subtitles are what is spoken), so it is not shown on screen; a weekly segment's headline is, as a lower-third |
 | `scenes[].narration` | 1-2 sentences (30 words max) read by the narrator over the scene's first non-talk run; empty = none |
-| `shots[].kind` | `talk` (a cast member speaks `line` on camera: Seedance 2.5 with the member's voice), `action` (animated clip on the action engine, Seedance by default), `still` (one frame, used as a quick Ken Burns cut-in), `insert` (one frame of a prop, screen, ticker or document; the headline text may appear) |
+| `shots[].kind` | `talk` (a cast member speaks `line` on camera: Seedance 2.5 with the member's voice), `action` (animated clip on the action engine, Seedance by default; the prompt names one motion, then `Hard cut to:` a second angle, so the clip gives the cut two compositions), `still` (one frame, used as a quick Ken Burns cut-in), `insert` (one frame of a prop, screen, ticker or document; the headline text may appear) |
 | `shots[].cast` | cast ids in the shot; a talk shot's first id is the speaker (default: the first cast member) |
 | `shots[].line` | talk shots only, required, 60 characters max (longer lines are trimmed at a word boundary) |
 | `shots[].prompt` | what the frame shows, drawn-anime terms, starting with the shot size; 60 words max |
 | `shots[].move` | `dolly_in`, `dolly_out`, `orbit`, `crane_up`, `handheld`, `whip_pan`, `crash_zoom`, `static` |
-| `shots[].seconds` | talk 4-10 (default from the line length), action 4-10 (default 5); stills ignore it |
+| `shots[].seconds` | the generated clip's length (what the spend estimate counts), not its time on screen: talk 4-10 (default from the line length), action 4-10 (default 5); stills ignore it |
 | `id`s | optional on input; missing or duplicate ids are regenerated |
 
 Extra optional fields: `title_card` (the 9:16 export's title; the 16:9 cut has no title card), `countdown` (label of the
@@ -90,9 +90,17 @@ Fields a member leaves out fall back to the built-in member with the same id.
 
 ## Rules
 
-- No cap on scenes per storyboard or shots per scene. The writer targets about 4 scenes per minute
-  (`max(2, round(minutes * 4))`: 0.5 min = 2, 1 min = 4, 3 min = 12) and 3-6 shots per scene, about half of them
-  still or insert (cheap) and half talk or action (animated).
+- No cap on scenes per storyboard or shots per scene (edits are never capped).
+- Pace: PsyopAnime's (median shot 1.4 s on screen, 27-50 cuts a minute). Per minute of target length the plan is
+  18-22 shots, 20 by default: about 5 talk shots (held 2.5-3 s on screen, so lines stay at 60 characters), 9 stills
+  and inserts (1.2-1.5 s cutaways) and 6 action shots (1-2 s per angle; each prompt is one clear motion plus a
+  `Hard cut to:` second angle). They are grouped in 4-5 scenes a minute (`max(2, round_half_up(minutes * 4.5))`:
+  0.5 min = 2, 1 min = 5, 2 min = 9, 3 min = 14). No talk in the cold open; each middle scene opens on a talk shot;
+  the episode ends on the sign-off talk.
+- `storyboard.shot_plan(minutes)` is that plan, scene by scene. The mock template follows it shot for shot, and the
+  writer gets it line by line (`1. cold_open: 4 shots (action, still, insert, action)`); a writer reply with under
+  80 % of the planned shots is sent back once with the reason. Weekly episodes use the same budget
+  (`weekly_plan`: 5 segments at 1 minute = 20 shots, one talk opening each segment, a cutaway-only markets insert).
 - Every shot gets its own start frame. Talk shots use the series style sheet and the speaker's character sheet as
   image references.
 - The cut never shows a source moment twice: each clip is cut into disjoint windows, each still appears once, and a

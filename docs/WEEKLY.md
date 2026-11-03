@@ -19,7 +19,7 @@ uv run anime-news weekly --weeks 2026-W01..2026-W44 --publish   # mark the rende
 | Flag | Meaning |
 | --- | --- |
 | `--week W` / `--weeks A..B` | one ISO week (`2026-W44`) or a range, run in the order given (`2026-W44..2026-W01` runs newest first) |
-| `--minutes` | episode length, default 1 (about 20 shots); 3 gives about 40 shots for the top weeks |
+| `--minutes` | episode length, default 1 (about 20 shots); 3 gives about 60 shots for the top weeks (PsyopAnime pace, 18-22 shots a minute) |
 | `--quality` | `480p` (default) or `720p` |
 | `--out DIR` | media dir (default `~/.anime-news/media`); weeks go to `DIR/weekly/<week>/` |
 | `--mock` | template storyboard and the offline placeholder render; no Router call |
@@ -130,7 +130,7 @@ re-rendering or deleting a week dir and running any weekly command keeps `index.
    Done weeks are skipped on a re-run, so the same command resumes after a stop.
 3. `--retry` over the range for partial weeks; then `--publish` again.
 
-Spend (estimate, cast assets already cached): about **$11 per week at 1 minute / 480p** (31 s of talk and 35 s of
-action clips at $0.149 per second, 20 images) and about **$46 per week at 3 minutes / 720p**. The full 2026 backfill
+Spend (estimate, cast assets already cached): about **$11 per week at 1 minute / 480p** (31 s of talk and 30 s of
+action clips at $0.149 per second, 21 images) and about **$62 per week at 3 minutes / 720p**. The full 2026 backfill
 (44 weeks) is about $500 at 1 minute / 480p, so the default $100 budget stops after 8 or 9 weeks.
 

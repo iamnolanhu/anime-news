@@ -30,10 +30,22 @@ def _split_source(title: str, source: str) -> tuple[str, str]:
     return title, (source or "").strip()
 
 
+def _has_doctype_or_entity(raw: bytes) -> bool:
+    """Check for DOCTYPE/ENTITY after decoding, so UTF-16 (BOM or NUL-interleaved) cannot hide them."""
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16", errors="replace")
+    elif b"\x00" in raw[:64]:
+        text = raw.decode("utf-16-le" if raw[1:2] == b"\x00" else "utf-16-be", errors="replace")
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    upper = text.upper()
+    return "<!DOCTYPE" in upper or "<!ENTITY" in upper
+
+
 def google_news(limit: int = 10) -> list[dict]:
     try:
         raw = _get(GOOGLE_NEWS_RSS)
-        if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:  # RSS needs neither; refuse entity tricks
+        if _has_doctype_or_entity(raw):  # RSS needs neither; refuse entity tricks in any encoding
             return []
         root = ET.fromstring(raw)
     except Exception:

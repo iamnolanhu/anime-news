@@ -334,7 +334,7 @@ def _storyboard_id(headline: str, minutes: float) -> str:
 
 _TEMPLATE = {
     "cold_open": ("a dark invented capital at night, CRT glow, teal shadows, burnt-orange light", "", "", [
-        ("action", [], "", "Extreme close-up of a red countdown clock in a dark war room, digits flipping, sparks of light", "crash_zoom"),
+        ("action", [], "", "Extreme close-up of a red alarm light spinning in a dark war room, sparks of light", "crash_zoom"),
         ("insert", [], "", "Close-up of a teletype printing the words \"{h}\" on yellowed paper", "static"),
         ("action", [], "", "Wide shot of searchlights sweeping across giant tower screens that all read \"{h}\"", "crane_up"),
         ("still", [], "", "Extreme close-up of {anchor}'s eyes reflecting a glowing monitor", "dolly_in"),
@@ -373,7 +373,7 @@ _TEMPLATE = {
     ]),
     "sign_off": ("the anime newsroom after hours, one monitor still glowing", "That was the news.",
                  "It will happen again. We will be here.", [
-        ("action", [], "", "Medium shot of the countdown clock hitting zero, a tiny paper flag pops out", "crash_zoom"),
+        ("action", [], "", "Medium shot of a giant red alarm button slammed down, a tiny paper flag pops out", "crash_zoom"),
         ("still", [], "", "Wide shot of the dark studio, one monitor glowing with \"{short}\"", "crane_up"),
         ("talk", ["anchor"], "It will happen again. " + SIGN_OFF, "Close-up of {anchor} at the desk, hands folded, perfectly deadpan", "dolly_out"),
     ]),
@@ -410,7 +410,7 @@ SYSTEM_PROMPT = """You are the head writer and storyboard artist of "{series}", 
 THE SHOW
 - Deadpan war-room gravitas applied to an absurd or mundane claim. The characters never wink; the joke is the contrast.
 - Literalize the headline: its abstract claim becomes an oversized physical prop or situation.
-- The episode is a STORY in acts: cold_open (image only, a gorgeous mystery hook), setup (the claim, briefed gravely), escalation (bigger and dumber, a visible ticking countdown), turn (a twist or conspiracy), climax (a genre pastiche that dramatizes the moral: samurai duel, heist, kaiju attack, sports final, space battle, courtroom...), sign_off (the button).
+- The episode is a STORY in acts: cold_open (image only, a gorgeous mystery hook), setup (the claim, briefed gravely), escalation (bigger and dumber, against a ticking countdown the cut draws as an overlay), turn (a twist or conspiracy), climax (a genre pastiche that dramatizes the moral: samurai duel, heist, kaiju attack, sports final, space battle, courtroom...), sign_off (the button).
 
 RECURRING CAST (original characters; use their NAMES in lines and prompts; the cast ids are fixed)
 {cast}
@@ -421,7 +421,7 @@ SHOT KINDS (mix them in every scene; no two consecutive shots show the same comp
 - talk: one cast member speaks one line on camera, mouth visible, facing camera. "cast": [speaker id], "line": the spoken words.
 - action: one strong subject, one clear motion verb; impact frames, speed lines, debris, wind, light. Becomes a short animated clip.
 - still: a single striking composition (face, eyes, reaction, wide establishing) used as a quick cut-in.
-- insert: a close-up of a prop, screen, ticker, document or countdown; the headline text may appear on it.
+- insert: a close-up of a prop, screen, ticker or document; the headline text may appear on it.
 Budget: talk and action shots are animated and expensive; still and insert are cheap. About half the shots of a scene are still or insert.
 
 HARD RULES
@@ -434,9 +434,10 @@ HARD RULES
 - caption: the scene's one-clause subtitle (<= 40 chars). narration: 1-2 deadpan briefing sentences (<= 30 words) or "" when the scene is all dialogue.
 - move: one of {moves}. seconds: talk 4-8 (by line length), action 5, still/insert 5.
 - Never depict, describe or name a real person; refer to people in the headline only by role ("the official"). Invented countries and institutions only. No real logos or flags. Safe for work: no weapons pointed at people, no gore. Never name an anime studio, film or artist.
+- """ + writer.NO_CLOCKS + """
 {style}
 OUTPUT: ONE JSON object, nothing else (no prose, no code fences):
-{{"logline": "one-sentence pitch", "title_card": "<= 30 chars, ALL CAPS", "countdown": "the clock's label, <= 24 chars (default: NEXT BRIEFING IN)",
+{{"logline": "one-sentence pitch", "title_card": "<= 30 chars, ALL CAPS", "countdown": "the countdown overlay's label, <= 24 chars (default: NEXT BRIEFING IN)",
   "cast": [{{"id", "name", "role", "look"}}],
   "scenes": [{{"act", "setting": "<= 20 words", "caption", "narration",
               "shots": [{{"kind": "talk|action|still|insert", "cast": ["id"], "line": "only for talk", "prompt", "move", "seconds"}}]}}]}}"""
@@ -601,7 +602,7 @@ def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = 
     plan = weekly_plan(len(segs), minutes)
     big = (headline or segs[0]["headline"]).replace('"', "'")
     cold = [
-        ("action", [], "", "Extreme close-up of a red countdown clock in a dark war room, digits flipping, sparks of light", "crash_zoom"),
+        ("action", [], "", "Extreme close-up of a red alarm light spinning in a dark war room, sparks of light", "crash_zoom"),
         ("insert", [], "", f"Close-up of a teletype printing the words \"{big}\" on yellowed paper", "static"),
         ("still", [], "", "Extreme close-up of KUROGANE's round glasses reflecting a glowing monitor", "dolly_in"),
         ("action", [], "", f"Wide shot of searchlights sweeping across giant tower screens that all read \"{big}\"", "crane_up"),
@@ -623,7 +624,7 @@ def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = 
                    "shots": markets})
     sign = [
         ("still", [], "", "Wide shot of the dark studio, one monitor glowing with the week's headlines", "crane_up"),
-        ("action", [], "", "Medium shot of the countdown clock hitting zero, a tiny paper flag pops out", "crash_zoom"),
+        ("action", [], "", "Medium shot of a giant red alarm button slammed down, a tiny paper flag pops out", "crash_zoom"),
         ("talk", ["anchor"], "That was the week. " + SIGN_OFF, "Close-up of KUROGANE folding his hands, perfectly deadpan", "dolly_out"),
     ]
     sign = sign[-plan["sign_off"]:]

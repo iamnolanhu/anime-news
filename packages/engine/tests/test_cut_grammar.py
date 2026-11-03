@@ -337,3 +337,26 @@ def test_a_headline_never_runs_onto_a_talk_take(media, tmp_path):
         for v in report["voice"]:
             assert v["at"] >= h["at"] + h["dur"] + 0.1 - 1e-3 or v["at"] + v["played"] <= h["at"] - 0.1 + 1e-3, (h, v)
     assert not any(c[0] == "Dropped" for s in _shots(report) for c in s["extra"].get("headline", []))
+
+
+def test_writers_never_draw_clocks_and_the_overlay_skips_shots_that_do(media, tmp_path):
+    """One clock on screen: both writer prompts forbid clocks, timers, countdowns and numbers in frames (the overlay
+    carries the countdown), the template storyboards draw none, and a shot whose prompt still draws one gets no
+    overlay."""
+    from shot_director import writer
+    rule = "Never draw clocks, timers, countdowns or on-screen numbers in frames: the overlay carries the countdown."
+    assert writer.NO_CLOCKS == rule
+    for prompt in (writer.SYSTEM_PROMPT_V2, S.SYSTEM_PROMPT):
+        assert rule in prompt
+        for stale in ("visible ticking clock", "countdown clock appears", "document or countdown", "a ticker, the countdown"):
+            assert stale not in prompt
+    segs = [{"topic": t, "headline": f"{t} story", "source_text": ""} for t in ("ai", "tech")]
+    for sb in (S.template("Mayor bans Mondays", minutes=1), S.weekly_template(segs, minutes=1)):
+        assert not [s["prompt"] for sc in sb["scenes"] for s in sc["shots"] if edit.CLOCK_WORDS.search(s["prompt"])]
+    act = lambda n, prompt: {"kind": "action", "clip": str(media / f"{n}.mp4"), "prompt": prompt}   # noqa: E731
+    plan = {"fps": FPS, "size": [320, 180], "countdown": {"label": "LAUNCH IN", "scene_beat": "escalation"},
+            "scenes": [{"beat": "escalation", "shots": [act("a", "Wide shot of traders sprinting with buckets"),
+                                                        act("b", "Close-up of a giant red countdown clock hitting zero")]}]}
+    plan_segs = edit.plan_segments(plan, tmp_path, media)
+    over = {(Path(s.src).stem, bool(s.extra.get("countdown"))) for s in plan_segs if s.kind == "clip"}
+    assert over == {("a", True), ("b", False)}

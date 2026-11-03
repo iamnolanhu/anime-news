@@ -261,11 +261,11 @@ def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None =
                 continue
             if r["kind"] == "talk":
                 items.append({"kind": "talk", "clip": str(media / r["clip"]), "line": r["line"],
-                              "speaker": (r["cast"] or [""])[0]})
+                              "speaker": (r["cast"] or [""])[0], "prompt": s.get("prompt", "")})
             elif r["kind"] == "action":
-                items.append({"kind": "action", "clip": str(media / r["clip"])})
+                items.append({"kind": "action", "clip": str(media / r["clip"]), "prompt": s.get("prompt", "")})
             else:
-                items.append({"kind": "still", "path": str(media / r["frame"])})
+                items.append({"kind": "still", "path": str(media / r["frame"]), "prompt": s.get("prompt", "")})
         if not items:
             continue
         scene = {"beat": sc["act"], "storyboard_scene": sc["id"], "shots": items}

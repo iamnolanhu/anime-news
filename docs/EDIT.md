@@ -99,8 +99,10 @@ with `"at": null` plays on every storyboard scene change and on the end card.
     1.2 s it moves to the scene's next quiet stretch (0.1 s after a line ends), and with none it is dropped (logged).
 12. **Countdown** (only when the plan has `countdown`; `render_storyboard` sets it only when the storyboard names a
     label): a big red (#FF2A2A) monospace `00:SS` top-right, its label above, over the last run of pictures of the
-    first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. No subtitle under
-    it states a time (R18).
+    first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. One clock on screen
+    (R18): a shot whose prompt mentions a clock, timer or countdown gets no overlay (both edit plans pass each shot's
+    prompt), and no subtitle under the overlay states a time. The writers are told never to draw clocks, timers,
+    countdowns or numbers in frames (`writer.NO_CLOCKS`, in the script and storyboard prompts).
 13. **Wordmark:** the plan's `title` (the series), small and gold, top-left, after the 28 px gold cube mark
     (`static/brand/an-mark-small.png`, overlaid with ffmpeg), on every frame. `SHOT_DIRECTOR_WORDMARK` overrides the
     text (empty = none), `SHOT_DIRECTOR_WORDMARK_MARK` the mark; a missing mark file is skipped.

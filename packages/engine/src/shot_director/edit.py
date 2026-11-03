@@ -57,6 +57,7 @@ ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never
 MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
 COUNTDOWN_RED = "0xFF2A2A"
 CLOCK = re.compile(r"\d+:\d\d")
+CLOCK_WORDS = re.compile(r"\b(clock|timer|countdown)s?\b", re.I)   # a shot whose prompt draws its own clock
 BED_VOLUME = 0.8
 BED_QUIET = 0.35           # the bed's level through the cold open; it builds to full by the last third (PsyopAnime)
 TRUE_PEAK = -1.0           # dBTP ceiling of the delivered file, measured after the AAC encode
@@ -463,7 +464,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     for si, scene in enumerate(plan.get("scenes", [])):
         shots: list[dict] = []
         for it in _scene_items(scene, resolve):
-            p = it["path"]
+            p, clock = it["path"], bool(CLOCK_WORDS.search(str(it.get("prompt") or "")))
             if p in used:
                 log.warning("scene %d: %s is already in the cut, skipped", si, Path(p).name)
                 continue
@@ -472,7 +473,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 if dur > 0.5:
                     used.add(p)
                     shots.append({"kind": "talk", "clip": p, "a0": 0.15, "a1": 0.15 + int((dur - 0.25) * fps) / fps,
-                                  "line": it.get("line") or "", "p0": 0.15, "p1": 0.15 + int((dur - 0.25) * fps) / fps})
+                                  "line": it.get("line") or "", "p0": 0.15, "p1": 0.15 + int((dur - 0.25) * fps) / fps,
+                                  "clock": clock})
             elif it["kind"] == "action":
                 if _duration(p) <= 0.5:
                     continue
@@ -480,11 +482,12 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 src = source(p)
                 for k, (a, b) in enumerate(src.angles()):
                     if pick_window(src, a, b, ACTION_HOLD, fps):
-                        shots.append({"kind": "clip", "src": src, "angle": k, "a": a, "b": b})
+                        shots.append({"kind": "clip", "src": src, "angle": k, "a": a, "b": b, "clock": clock})
                     else:
                         gated.append({"src": p, "angle": k, "gate": round(src.gate_at(a), 1)})
             else:
-                shots.append({"kind": "still", "path": p, "len": STILL_HOLD, "fallback_for": it.get("fallback_for")})
+                shots.append({"kind": "still", "path": p, "len": STILL_HOLD, "fallback_for": it.get("fallback_for"),
+                              "clock": clock})
         shown = {sh["src"].path for sh in shots if sh["kind"] == "clip"}
         shots = [sh for sh in shots if sh["kind"] != "still" or not sh.get("fallback_for") or sh["fallback_for"] not in shown]
         if not shots:
@@ -625,6 +628,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                     n_still += 1
                     seg = Seg("still", frames(sh["len"]), src=sh["path"], scene=si,
                               motion=("push", "shake", "pull")[(n_still - 1 + si) % 3])
+                if sh.get("clock"):
+                    seg.extra["clock"] = True   # draws its own clock: no countdown overlay on it
                 sh["seg"] = seg
                 body.append(seg)
         for v in voices + headlines:   # anchors that are shot records become their segments
@@ -721,7 +726,8 @@ def _headlines(segs: list[Seg], headlines: list[dict], voices: list[dict], fps: 
 
 def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:
     """The countdown overlay, only when the plan asks for one: over the last run of non-talk shots of the first scene
-    with that beat, running down to 00:00 exactly at the run's end. No subtitle states a time under it (R18)."""
+    with that beat, running down to 00:00 exactly at the run's end. One clock on screen (R18): a shot whose prompt
+    draws a clock, timer or countdown gets no overlay, and no subtitle under the overlay states a time."""
     cd = plan.get("countdown")
     if not cd:
         return
@@ -739,6 +745,8 @@ def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:
             continue
         total = sum(s.frames for s in run) / fps
         for s in run:
+            if s.extra.get("clock"):
+                continue
             s.extra["countdown"] = {"label": cd.get("label", ""), "total": round(total, 3),
                                     "offset": round(s.at - run[0].at, 4)}
             if s.extra.get("cues"):

@@ -200,7 +200,8 @@ def edit_plan(script: dict, shots: list[dict], media: Path) -> dict:
             continue
         if not scenes or scenes[-1]["beat"] != s["act"]:
             scenes.append({"beat": s["act"], "shots": [], "clip_audio_gain": 0.35})
-        shot = {"kind": s["kind"], "clip": str(media / s["id"])}
+        shot = {"kind": s["kind"], "clip": str(media / s["id"]),
+                "prompt": f"{s.get('visual', '')} {s.get('second_angle', '')}".strip()}
         if s["kind"] == "talk":
             shot.update(line=s["line"], speaker=s["speaker"])
         scenes[-1]["shots"].append(shot)

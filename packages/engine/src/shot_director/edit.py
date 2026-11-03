@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -40,14 +41,15 @@ TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
 CLIP_SEG = (1.6, 2.5)      # output seconds of a clip segment (formula: avg shot 1.3-1.8 s, never > 2.5)
 CLIP_SEG_MIN = 1.2
-CLIP_WIN_MIN = 1.45       # a clip holds as many disjoint windows of >= this as fit (5 s -> 3)
-MAX_WINDOWS = 3
 STILL_SEG = (0.9, 1.3)     # output seconds of a still cutaway
 BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
 BURST_COUNT = 4
 CRT_SEG = (0.5, 0.8)       # CRT monitor insert used as a transition
 SHARP_GATE = 0.4           # skip clip segments whose sharpness < 40 % of the clip's median
 SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
+SCENE_CUT = 0.25           # ffmpeg scene score of a clip's internal hard cut (a Seedance "Hard cut to:" second angle)
+ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never shown
+MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
 TALK_WIN = (1.6, 3.0)      # a talk take is shown nearly whole, in 2-3 abutting windows of this length
 TALK_PUNCH = 1.3           # punch-in crop on alternate talk windows
 COUNTDOWN_RED = "0xFF2A2A"
@@ -120,45 +122,99 @@ def _has_audio(path: str) -> bool:
     return _AUDIO_CACHE[path]
 
 
-_SHARP_CACHE: dict[tuple[str, int], float] = {}
+class Source:
+    """One clip, decoded once at 160x90 grayscale. Per frame: sharpness (Laplacian variance, computed on demand;
+    motion smear -> low value) and motion (mean absolute difference to the previous frame). Plus the clip's
+    internal hard cuts (Seedance action clips carry a "Hard cut to:" second angle) and the angles between them."""
+    W, H = 160, 90
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.dur = _duration(path)
+        p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                            "-of", "csv=p=0", path], capture_output=True, text=True)
+        num, _, den = (p.stdout.strip() or "24/1").partition("/")
+        self.fps = float(num) / float(den or 1) if float(num or 0) > 0 else 24.0
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-vf", f"scale={self.W}:{self.H},format=gray",
+                              "-f", "rawvideo", "-"], capture_output=True).stdout
+        n = self.W * self.H
+        self.frames = [raw[i:i + n] for i in range(0, len(raw) - n + 1, n)]
+        self._sharp: dict[int, float] = {}
+        self.motion = [0.0] + [sum(abs(a[k] - b[k]) for k in range(0, n, 4)) / (n / 4)
+                               for a, b in zip(self.frames, self.frames[1:])]
+        self.cuts = detect_cuts(path, self.dur)
+        lo, hi = 0.15, max(0.2, self.dur - 0.15)
+        ts = sorted(self.sharp(lo + (hi - lo) * i / 9) for i in range(10))
+        self.median = ts[len(ts) // 2]
+        self.gate = max(SHARP_GATE * self.median, SHARP_FLOOR)
+
+    def index(self, t: float) -> int:
+        return min(len(self.frames) - 1, max(0, int(t * self.fps + 0.5)))
+
+    def sharp(self, t: float) -> float:
+        if not self.frames:
+            return 0.0
+        i = self.index(t)
+        if i not in self._sharp:
+            px, w = self.frames[i], self.W
+            vals = [px[k - 1] + px[k + 1] + px[k - w] + px[k + w] - 4 * px[k]
+                    for y in range(1, self.H - 1) for k in range(y * w + 1, y * w + w - 1)]
+            m = sum(vals) / len(vals)
+            self._sharp[i] = sum((a - m) ** 2 for a in vals) / len(vals)
+        return self._sharp[i]
+
+    def seg_sharp(self, start: float, src_dur: float) -> float:
+        """Worst of the first, middle and last frame of a segment (a smeared head or tail fails the gate)."""
+        return min(self.sharp(start + min(0.08, src_dur / 4)), self.sharp(start + src_dur / 2),
+                   self.sharp(start + max(0.0, src_dur - 0.08)))
+
+    def motion_at(self, t: float, n: int = MOTION_FRAMES) -> float:
+        i = self.index(t)
+        part = self.motion[i + 1:i + 1 + n]
+        return sum(part) / len(part) if part else 0.0
+
+    def angles(self) -> list[tuple[float, float]]:
+        """The continuous spans between internal cuts, each at least ANGLE_MIN_S long. A cut zone (one cut or
+        a cluster of changes) is excluded with one frame of margin on each side."""
+        out, t, f = [], 0.0, 1 / self.fps
+        for a, b in self.cuts + [(self.dur - 0.05 + f, self.dur)]:
+            if a - f - t >= ANGLE_MIN_S:
+                out.append((t, a - f))
+            t = b + f
+        return out
 
 
-def sharpness(clip: str, t: float, w: int = 160, h: int = 90) -> float:
-    """Laplacian variance of a small grayscale frame (pure Python; motion smear -> low value)."""
-    key = (clip, int(t * 100))
-    if key in _SHARP_CACHE:
-        return _SHARP_CACHE[key]
-    p = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(0.0, t):.3f}", "-i", clip, "-frames:v", "1",
-                        "-vf", f"scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True)
-    px = p.stdout
-    if len(px) < w * h:
-        return 0.0
-    vals = []
-    for y in range(1, h - 1):
-        r = y * w
-        for x in range(1, w - 1):
-            i = r + x
-            vals.append(px[i - 1] + px[i + 1] + px[i - w] + px[i + w] - 4 * px[i])
-    m = sum(vals) / len(vals)
-    v = sum((a - m) ** 2 for a in vals) / len(vals)
-    _SHARP_CACHE[key] = v
-    return v
+_SOURCES: dict[str, Source] = {}
 
 
-def clip_profile(clip: str, dur: float, samples: int = 10) -> tuple[float, float, float]:
-    """(strongest time, its sharpness, median sharpness) over `samples` evenly spaced frames."""
-    lo, hi = 0.15, max(0.2, dur - 0.15)
-    ts = [lo + (hi - lo) * i / max(1, samples - 1) for i in range(samples)]
-    scored = sorted((sharpness(clip, t), t) for t in ts)
-    med = scored[len(scored) // 2][0]
-    best, t = scored[-1]
-    return t, best, med
+def source(path: str) -> Source:
+    if path not in _SOURCES:
+        _SOURCES[path] = Source(path)
+    return _SOURCES[path]
+
+
+def detect_cuts(path: str, dur: float) -> list[tuple[float, float]]:
+    """Internal hard cuts of a clip: frames whose ffmpeg scene score exceeds SCENE_CUT, ignoring the first and
+    last 0.2 s (encoder artefacts); changes closer than 0.3 s are one cut zone (first, last)."""
+    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vf", f"select='gt(scene,{SCENE_CUT})',showinfo",
+                        "-an", "-f", "null", "-"], capture_output=True, text=True)
+    zones: list[list[float]] = []
+    for t in sorted(float(m) for m in re.findall(r"pts_time:([0-9.]+)", p.stderr)):
+        if t < 0.2 or t > dur - 0.2:
+            continue
+        if zones and t - zones[-1][1] < 0.3:
+            zones[-1][1] = t
+        else:
+            zones.append([t, t])
+    return [(a, b) for a, b in zones]
+
+
+def sharpness(clip: str, t: float) -> float:
+    return source(clip).sharp(t)
 
 
 def seg_sharpness(clip: str, start: float, src_dur: float) -> float:
-    """Worst of the first, middle and last frame of a segment (a smeared head or tail fails the gate)."""
-    return min(sharpness(clip, start + min(0.08, src_dur / 4)), sharpness(clip, start + src_dur / 2),
-               sharpness(clip, start + max(0.0, src_dur - 0.08)))
+    return source(clip).seg_sharp(start, src_dur)
 
 
 def _wrap_caption(text: str, width: int = 30) -> str:
@@ -218,44 +274,36 @@ class SourceLedger:
             out.append((t, dur - 0.05))
         return [(a, b) for a, b in out if b - a > 1e-6]
 
-    def room_after(self, src: str, t: float, dur: float) -> float:
-        """Free source seconds from `t` to the next used window (or the clip's end)."""
-        nxt = [a for a, _ in self.used.get(src, []) if a >= t - 1e-6]
-        return max(0.0, min([dur - 0.05] + nxt) - t)
 
+def pick_window(src: Source, a: float, b: float, length: float, fps: int) -> tuple[float, float] | None:
+    """The shown window (start, length) of one angle [a, b], never crossing its ends (R4). Start: the earliest one
+    whose window passes the sharpness gate, then within the next 0.5 s the one with the most motion in its first
+    frames (cut on motion). A smeared tail shortens the window, never below ANGLE_MIN_S, rather than moving it.
+    None when no window of the angle passes the gate."""
+    step = 1 / fps
 
-def _windows(free: list[tuple[float, float]], fps: int, rng: random.Random, t_best: float,
-             hold: float = 0.0) -> list[tuple[float, float]]:
-    """Disjoint (start, length) windows inside the free source intervals. Each interval holds as many
-    slots of at least CLIP_WIN_MIN as fit (a 5 s clip: 3 slots of about 1.65 s), at most MAX_WINDOWS
-    spread over the clip; each window is CLIP_SEG long or its slot, whichever is shorter, in whole
-    frames. The window whose slot holds the strongest frame snaps to it, inside its slot only.
-    `hold` keeps a strip at the end of the longest interval free (burst shots in action beats)."""
-    free = list(free)
-    if hold and free:
-        i = max(range(len(free)), key=lambda j: free[j][1] - free[j][0])
-        if free[i][1] - free[i][0] > hold + CLIP_SEG_MIN:
-            free[i] = (free[i][0], free[i][1] - hold)
-    slots: list[tuple[float, float]] = []
-    for a, b in free:
-        n = int((b - a) // CLIP_WIN_MIN) or (1 if b - a >= CLIP_SEG_MIN else 0)
-        slots += [(a + i * (b - a) / n, (b - a) / n) for i in range(n)]
-    if not slots and free:   # a very short clip: one window over its longest free run
-        a, b = max(free, key=lambda x: x[1] - x[0])
-        if b - a >= 0.5:
-            slots = [(a, b - a)]
-    if len(slots) > MAX_WINDOWS:
-        slots = [slots[round(j * (len(slots) - 1) / (MAX_WINDOWS - 1))] for j in range(MAX_WINDOWS)]
-    out = []
-    for j, (a, w) in enumerate(slots):
-        n = max(1, int(min(rng.uniform(*CLIP_SEG), w) * fps + 1e-6))
-        length = min(n / fps, w)
-        frac = j / (len(slots) - 1) if len(slots) > 1 else 0.0
-        out.append([a + (w - length) * frac, length, a, w])
-    if out:
-        near = min(out, key=lambda x: 0.0 if x[2] <= t_best <= x[2] + x[3] else abs(x[0] + x[1] / 2 - t_best))
-        near[0] = min(max(near[2], t_best - 0.1), near[2] + near[3] - near[1])
-    return [(st, length) for st, length, _, _ in out]
+    def fit(t: float) -> float:
+        n = int(min(length, b - t) * fps + 1e-6)
+        while n / fps >= ANGLE_MIN_S - 1e-6:
+            if src.seg_sharp(t, n / fps) >= src.gate:
+                return n / fps
+            n -= 1
+        return 0.0
+
+    t, first = a, None
+    while t <= b - ANGLE_MIN_S + 1e-6:
+        if (n := fit(t)):
+            first = (t, n)
+            break
+        t += step
+    if first is None:
+        return None
+    best, best_m, t = first, src.motion_at(first[0]), first[0] + step
+    while t <= min(first[0] + 0.5, b - ANGLE_MIN_S) + 1e-6:
+        if (n := fit(t)) >= first[1] - 1e-6 and src.motion_at(t) > best_m:
+            best, best_m = (t, n), src.motion_at(t)
+        t += step
+    return best
 
 
 def _still_items(scene: dict, abs_path, resolve) -> list[tuple[str, str | None]]:
@@ -338,25 +386,24 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     title = Seg("title", frames(TITLE_FRAMES_S))
     segs: list[Seg] = [title]
     # profile every clip first: the cold open takes the episode's strongest moment before any scene does
-    profiles: list[dict[str, tuple[float, float, float, float]]] = []   # clip -> (dur, t_best, score, median)
+    profiles: list[dict[str, Source]] = []
     for scene in plan.get("scenes", []):
-        info: dict[str, tuple[float, float, float, float]] = {}
+        info: dict[str, Source] = {}
         for clip in ([] if scene.get("talk") else (resolve(p) for p in scene.get("clips", []))):
-            if clip and clip not in info:
-                dur = _duration(clip)
-                if dur > 0.5:
-                    info[clip] = (dur, *clip_profile(clip, dur))
+            if clip and clip not in info and _duration(clip) > 0.5:
+                info[clip] = source(clip)
         profiles.append(info)
     span = title.frames / fps
-    # cold open: the title over the strongest WINDOW in the whole episode. The absolute gate applies here as well: the
-    # candidate frame and the whole window it opens (first, middle and last frame) must pass, else the title plays alone.
-    ranked = sorted(((v[2], c, v[1], v[0], v[3]) for info in profiles for c, v in info.items()), reverse=True)
-    for score, clip, t, dur, med in ranked:
-        gate = max(SHARP_GATE * med, SHARP_FLOOR)
-        if score < gate or dur - 0.05 < span:
+    # cold open: the title over the strongest WINDOW in the whole episode, inside one angle. The absolute gate applies
+    # here as well: the window (first, middle and last frame) must pass, else the title plays alone.
+    ranked = sorted(((src.sharp(t), clip, t, a, b) for info in profiles for clip, src in info.items()
+                     for a, b in src.angles() for t in (a + (b - a) * i / 4 for i in range(5))), reverse=True)
+    for score, clip, t, a, b in ranked:
+        src = source(clip)
+        if score < src.gate or b - a < span:
             continue
-        start = min(max(0.0, t - 0.2), dur - 0.05 - span)
-        if seg_sharpness(clip, start, span) < gate:
+        start = min(max(a, t - 0.2), b - span)
+        if src.seg_sharp(start, span) < src.gate:
             continue
         title.src, title.start = clip, start
         title.extra["src_dur"] = span
@@ -381,22 +428,27 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
         clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
         candidates: list[tuple[float, Seg]] = []
-        hold = BURST_FRAMES / fps + 0.05 if action else 0.0
-        for clip, (dur, t_best, _score, med) in info.items():
-            for start, length in _windows(ledger.free(clip, dur), fps, rng, t_best, hold):
-                s = Seg("clip", round(length * fps), src=clip, start=start, caption=cap, scene=si)
-                s.extra["src_dur"] = length
-                sh = seg_sharpness(clip, start, length)
-                s.extra["sharp"], s.extra["sharp_median"] = round(sh, 1), round(med, 1)
-                s.extra["passes_gate"] = sh >= max(SHARP_GATE * med, SHARP_FLOOR)
-                candidates.append((sh, s))
-        # sharpness gate applies to every window, the opener included; drop smeared windows
+        # one window per angle (the span between a clip's internal hard cuts): a window never hides a cut (R4)
+        for clip, src in info.items():
+            for k, (a, b) in enumerate(src.angles()):
+                free = [(x, y) for x, y in ledger.free(clip, src.dur) if y > a and x < b]
+                win = pick_window(src, max(a, free[0][0]), min(b, free[0][1]), CLIP_SEG[0], fps) if free else None
+                candidates.append((0.0, Seg("clip", 0, src=clip, start=a, caption=cap, scene=si)))
+                s = candidates[-1][1]
+                s.extra.update(angle=k, sharp_median=round(src.median, 1))
+                if win:
+                    s.start, s.frames = win[0], round(win[1] * fps)
+                    s.extra["src_dur"] = win[1]
+                    s.extra["passes_gate"] = True
+                    candidates[-1] = (src.seg_sharp(*win), s)
+                else:
+                    s.extra["passes_gate"] = False
+        # sharpness gate applies to every window, the opener included; an angle with no passing window is dropped
         for sh, s in candidates:
             if s.extra["passes_gate"]:
                 clip_segs.append((sh, s))
             else:
-                gated.append({"src": s.src, "start": round(s.start, 2), "sharp": round(sh, 1),
-                              "median": s.extra["sharp_median"]})
+                gated.append({"src": s.src, "angle": s.extra["angle"], "median": s.extra["sharp_median"]})
         if candidates and not clip_segs and stills:
             # nothing passes: the scene opens on its stills (always sharp); the smeared clip stays gated
             log.warning("scene %d: no clip window passes the sharpness gate; using stills only", si)
@@ -421,16 +473,11 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if ordered:
             ramp = ordered[1] if len(ordered) > 1 else ordered[0]
             speed = 1.4 if si % 2 == 0 else 0.7
-            dur = info[ramp.src][0]
-            # keep the gated window's start (moving it back could pull in smeared frames); a speed-up
-            # may only run on into unused source, else it shortens the shot instead
+            # the ramp keeps its gated source window (extending it could cross the angle's end): a speed-up
+            # shortens the shot instead
             ledger.release(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
-            src_dur = min(ramp.frames / fps / speed, ledger.room_after(ramp.src, ramp.start, dur))
+            src_dur = ramp.extra["src_dur"]
             n = int(src_dur * speed * fps + 1e-6)
-            med = info[ramp.src][3]
-            if src_dur > ramp.extra["src_dur"] + 1e-6 and \
-                    seg_sharpness(ramp.src, ramp.start, src_dur) < max(SHARP_GATE * med, SHARP_FLOOR):
-                n = 0   # the extended span runs into smeared frames: no ramp on this shot
             if n / fps >= 0.6:
                 ramp.speed, ramp.frames = speed, n
                 ramp.extra["src_dur"] = n / fps / speed
@@ -476,7 +523,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             srcs = list(dict.fromkeys(s.src for s in ordered))
             for b in range(BURST_COUNT):
                 src = srcs[b % len(srcs)]
-                dur, _, _, med = info[src]
+                dur, med = info[src].dur, info[src].median
                 spans = [(a, e) for a, e in ledger.free(src, dur) if e - a >= bl]
                 st = None
                 for _ in range(5):   # sharpness gate for burst shots as well; skip the shot if nothing passes

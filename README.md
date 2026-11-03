@@ -32,15 +32,15 @@ backfills the year. Details, the manifest shape and the backfill run: [docs/WEEK
 
 The hourly loop (`shot-director-episode --loop --every 60m`, or `SHOT_DIRECTOR_AUTO=1`) still exists in the code and is off by default.
 
-## Your key stays on your machine
+## Your key stays on your machine (local mode)
 
 You bring a Comfy API key (platform.comfy.org, API Keys). The Studio keeps it in your browser's localStorage and hands it to the engine on `127.0.0.1` (it refuses to send it to any other engine URL); the engine stores it in `~/.anime-news/config.json` with 0600 permissions. Storyboards and videos live in `~/.anime-news/` and in your browser.
 
-The website is static. It never receives your key, your storyboards or your videos: the browser talks to your engine directly, and the engine talks to Comfy Router. The optional "Check with Comfy" button sends the key from your browser straight to `api.comfy.org`. Site analytics (PostHog, with every input masked in replays) never load on localhost.
+In local mode nothing reaches the website: it never receives your key, your storyboards or your videos, because the browser talks to your engine directly and the engine talks to Comfy Router. (The shared demo mode below works differently.) The optional "Check with Comfy" button sends the key from your browser straight to `api.comfy.org`. Site analytics (PostHog, with every input masked in replays) never load on localhost.
 
 ## Hosted demo
 
-The public site also runs a shared demo engine so visitors can try a render without installing anything or bringing a key. It is capped: 480p, episodes up to 1 minute, a few renders per visitor per day and a daily spend budget for the whole engine. "Use my own local engine" in the Studio switches back to the local flow above, with your own key.
+The public site also runs a shared demo engine so visitors can try a render without installing anything or bringing a key. It is capped: 480p, episodes up to 1 minute, a few renders per visitor per day and a daily spend budget for the whole engine. In this mode your headline, storyboard and the rendered video pass through the site's server and the shared engine; the site stores none of it, and your own Comfy key is never asked for. "Use my own local engine" in the Studio switches back to the local flow above, with your own key.
 
 How it works: the site proxies `/engine/*` to the engine from the server side and adds an access value, so the browser only talks to the site, and the engine refuses any request without that value. To run your own hosted demo, set these on the Vercel project (never in the repo):
 
@@ -75,6 +75,8 @@ In hosted mode `PUT /api/config` answers 403, over-limit requests get 429 with `
 | --- | --- |
 | `apps/web` | The site: Next.js 16, Tailwind v4, Bun. Landing page, episode gallery (`content/episodes.json` + `public/episodes/`), and the Studio, which is a browser client for the local engine |
 | `packages/engine` | The engine: Python, FastAPI, ffmpeg. The `anime-news` CLI and the local HTTP API below. Details in [packages/engine/README.md](packages/engine/README.md) |
+
+**ComfyUI workflow files:** the two ComfyUI workflow JSONs (`shot-director-flux3-shot.json`, `shot-director-ltx-preview.json`) and their README are in [packages/engine/workflows/](packages/engine/workflows/).
 
 The pipeline, one episode:
 

@@ -224,12 +224,13 @@ def usable(r: dict) -> bool:
 def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None = None) -> dict:
     """edit.assemble scenes: one per storyboard scene, its rendered shots in storyboard order (talk takes with their
     own sound, action clips, stills and inserts as stills), with the scene's narration, which edit.py plays in full
-    over the scene's first run of pictures. Subtitles come from what is spoken; the countdown is drawn only when
-    the storyboard names one."""
+    over the scene's first run of pictures. Subtitles come from what is spoken; a weekly segment's headline is its
+    one lower-third; the countdown is drawn only when the storyboard names one."""
     from . import music
     kit = music.music_kit(media)
     narration = narration or {}
     by_id = {r["id"]: r for r in shots}
+    headlines = {seg["topic"]: seg["headline"] for seg in sb.get("segments") or []}
     scenes: list[dict] = []
     for sc in sb["scenes"]:
         items = []
@@ -247,6 +248,8 @@ def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None =
         if not items:
             continue
         scene = {"beat": sc["act"], "storyboard_scene": sc["id"], "shots": items}
+        if sc.get("topic") in headlines:   # a weekly segment: its headline is shown once, as a lower-third
+            scene["headline"] = headlines[sc["topic"]]
         if sc.get("narration"):
             scene["narration"] = sc["narration"]
             if narration.get(sc["id"]):

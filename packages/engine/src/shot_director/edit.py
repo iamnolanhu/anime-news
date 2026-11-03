@@ -13,6 +13,7 @@ changes, loudnorm. No generation happens here; audio.py makes the sound files.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import logging
 import math
@@ -42,6 +43,7 @@ ACTION_HOLD = 2.0          # the run's last shot holds and resets the beat (1.5-
 BURST_MIN = 3              # this many consecutive short shots of distinct compositions, from 2+ clips, are a burst
 STILL_HOLD = 1.9           # a still holds (PsyopAnime stills average 1.9 s), with one Ken Burns move
 STILL_MAX = 6.0            # ... and up to this long when a line needs the time
+HEADLINE_S = 2.5           # a scene's headline lower-third holds this long, in a stretch with no voice
 EXTEND_SOFT = 2.5          # a line that needs more picture first grows every shot of its run up to this
 TALK_HOLD_MAX = 4.0        # a talk take longer than this lends part of its line to the next (or previous) shots
 TALK_HOLD_MIN = 2.0        # ... but holds at least this long on the speaker
@@ -428,6 +430,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
 
     gated: list[dict] = []
     voices: list[dict] = []
+    headlines: list[dict] = []
     used: set[str] = set()   # every clip and still is on screen in one place only
     segs: list[Seg] = []
     n_still = 0
@@ -494,18 +497,47 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                     for sh in run[j:k]:
                         sh["burst"] = True
                 j = k + 1
-        hosted: set[int] = set()   # runs already carrying a voice
-        # narration rides the scene's first run and plays in full: the run grows to fit it (R13)
+        hosted: set[int] = set()   # runs already carrying a voice (or the headline)
+        # the scene's headline (weekly segments) opens its first run of pictures, after an opening talk take, for
+        # HEADLINE_S with no voice under it; that run lends no time to a talk take
+        headline = " ".join(str(scene.get("headline") or "").split())
+        if headline and runs:
+            hosted.add(id(runs[0]))
+        elif headline:
+            log.warning("scene %d: no pictures without a voice for the headline, not shown", si)
+            headline = ""
+        # narration rides the scene's first run and plays in full: the run grows to fit it (R13); after a
+        # headline it starts on the run's next cut (or, in a one-shot run, once the headline is off)
         narr = resolve(scene["narration_audio"]) if scene.get("narration_audio") else None
+        if headline and not narr:
+            _extend(runs[0], HEADLINE_S, fps)
         if narr and runs:
             run, nd = runs[0], _duration(narr)
-            got = _extend(run, 0.1 + nd + 0.15, fps)
-            _first_at_least(run, 0.95, fps)
+            lead = 0.0
+            if headline:
+                # the voice starts on the first cut after the headline when the shots from there can hold it;
+                # else inside the shot that carries the headline, once it is off
+                need = 0.1 + nd + 0.15
+                _extend(run[:1], HEADLINE_S + 0.1, fps)
+                ends = list(itertools.accumulate(sh["len"] for sh in run))
+                k = next((j + 1 for j, e in enumerate(ends[:-1]) if e >= HEADLINE_S + 0.1 - 1e-6), None)
+                if k is not None and _run_max(run[k:], fps) >= need - 1e-6:
+                    run = run[k:]
+                else:
+                    first = next(j for j, e in enumerate(ends) if e > HEADLINE_S - 1e-6) if ends[-1] > HEADLINE_S \
+                        else len(run) - 1
+                    lead = HEADLINE_S - (ends[first - 1] if first else 0.0)
+                    run = run[first:]
+            got = _extend(run, lead + 0.1 + nd + 0.15, fps) - lead
+            _first_at_least(run, lead + 0.95, fps)
             if got < 0.1 + nd + 0.15 - 1e-6:
                 log.warning("scene %d: narration %.2fs does not fit its pictures (%.2fs)", si, nd, got)
             voices.append({"kind": "narration", "path": narr, "start": 0.0, "dur": min(nd, got - 0.25),
-                           "file_dur": nd, "text": scene.get("narration") or "", "anchor": run[0], "offset": 0.1})
-            hosted.add(id(run))
+                           "file_dur": nd, "text": scene.get("narration") or "", "anchor": run[0],
+                           "offset": lead + 0.1})
+            hosted.add(id(runs[0]))
+        if headline:
+            headlines.append({"scene": si, "text": headline, "anchor": runs[0][0]})
         # talk takes over TALK_HOLD_MAX hold 2-3 s on the speaker; the rest of the line plays over the next run
         # (L-cut) or its start over the previous run (J-cut), cut on a clause boundary that falls in a pause (R12)
         for i, sh in enumerate(seq):
@@ -565,7 +597,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                               motion=("push", "shake", "pull")[(n_still - 1 + si) % 3])
                 sh["seg"] = seg
                 body.append(seg)
-        for v in voices:   # anchors that are shot records become their segments
+        for v in voices + headlines:   # anchors that are shot records become their segments
             if isinstance(v["anchor"], dict):
                 v["anchor"] = v["anchor"]["seg"]
         segs += body
@@ -590,10 +622,14 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if "anchor" in v:
             v["at"] = round(v.pop("anchor").at + v.pop("offset"), 4)
     voices.sort(key=lambda v: v["at"])
+    for h in headlines:
+        h["at"], h["dur"] = round(h.pop("anchor").at, 4), HEADLINE_S
     _captions(segs, voices, fps)
+    _headlines(segs, headlines, fps)
     _countdown(plan, segs, fps)
     plan_segments.gated = gated
     plan_segments.voice = voices
+    plan_segments.headlines = headlines
     return segs
 
 
@@ -617,6 +653,16 @@ def _captions(segs: list[Seg], voices: list[dict], fps: int) -> None:
         s.caption = s.extra["cues"][0][0] if s.extra["cues"] else ""
         if not s.extra["cues"]:
             del s.extra["cues"]
+
+
+def _headlines(segs: list[Seg], headlines: list[dict], fps: int) -> None:
+    """Each headline lower-third onto the segments it spans, in subtitle style (`extra["headline"]`)."""
+    for h in headlines:
+        for s in segs:
+            d = s.frames / fps
+            if s.kind in ("clip", "still") and h["at"] + h["dur"] > s.at + 1e-3 and h["at"] < s.at + d - 1e-3:
+                s.extra.setdefault("headline", []).append(
+                    (h["text"], round(max(0.0, h["at"] - s.at), 3), round(min(d, h["at"] + h["dur"] - s.at), 3)))
 
 
 def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:
@@ -671,20 +717,14 @@ def _caption_filter(s: Seg, font: str, workdir: Path, idx: int, H: int) -> str:
     fontopt = f"fontfile={_q(font)}:" if font else ""
     style_ = (f":expansion=none:fontsize={size}:fontcolor={GOLD}:box=1:boxcolor=black@0.62:boxborderw={size // 3}"
               f":line_spacing={size // 5}:x=(w-text_w)/2:y=h-text_h-{H // 11}")
-    if s.extra.get("cues"):   # talk take: each clause on screen for its share of the spoken line
-        out = ""
-        for k, (text, a, b) in enumerate(s.extra["cues"]):
-            tf = workdir / f"cap-{idx}-{k}.txt"
-            tf.write_text(_wrap_caption(text))
-            alpha = f":alpha='min(1,(t-{a:.3f})*10)'" if a > 0.001 else ""
-            out += f",drawtext={fontopt}textfile={_q(tf)}{style_}:enable='between(t,{a:.3f},{b:.3f})'{alpha}"
-        return out
-    if not s.caption:
-        return ""
-    tf = workdir / f"cap-{idx}.txt"
-    tf.write_text(_wrap_caption(s.caption))
-    alpha = ":alpha='min(1,t*10)'" if s.pop else ""
-    return f",drawtext={fontopt}textfile={_q(tf)}{style_}{alpha}"
+    # spoken clauses and the scene's headline share the band; they never overlap in time (plan_segments)
+    out = ""
+    for k, (text, a, b) in enumerate(s.extra.get("cues", []) + s.extra.get("headline", [])):
+        tf = workdir / f"cap-{idx}-{k}.txt"
+        tf.write_text(_wrap_caption(text))
+        alpha = f":alpha='min(1,(t-{a:.3f})*10)'" if a > 0.001 else ""
+        out += f",drawtext={fontopt}textfile={_q(tf)}{style_}:enable='between(t,{a:.3f},{b:.3f})'{alpha}"
+    return out
 
 
 def _countdown_filter(s: Seg, workdir: Path, idx: int, H: int) -> str:
@@ -984,6 +1024,8 @@ def cut_report(plan: dict, segs: list[Seg], voices: list[dict], notes: list[str]
                          "file_dur": round(v["file_dur"], 3), "text": v["text"]} for v in voices],
               "src_cuts": {c: [t for zone in source(c).cuts for t in zone]
                            for c in dict.fromkeys(s.src for s in segs if s.kind == "clip" and not s.extra.get("talk"))}}
+    report["headlines"] = [{k: h[k] for k in ("scene", "text", "at", "dur")}
+                           for h in getattr(plan_segments, "headlines", [])]
     report["reuse"] = reuse_report(report["timeline"], fps)
     cd = next((s for s in segs if s.extra.get("countdown")), None)
     report["countdown"] = ({"scene": cd.scene, "label": cd.extra["countdown"]["label"],

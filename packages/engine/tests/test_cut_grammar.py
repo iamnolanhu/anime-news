@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from cut_metrics import CLOCK, metrics
-from shot_director import edit
+from shot_director import edit, render_storyboard as R, storyboard as S
 
 pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
 FPS = 24
@@ -213,3 +213,44 @@ def test_assemble_delivers_full_lines_under_the_true_peak_ceiling(media, tmp_pat
     assert report["loudness"]["TP"] is not None and report["loudness"]["TP"] <= -1.0
     assert all(abs(v["played"] - v["file_dur"]) < 0.05 for v in report["voice"])
     assert report["reuse"]["overlapping_windows"] == 0
+
+
+def test_headline_lower_third_is_shown_once_never_under_a_voice(media, tmp_path):
+    """A weekly segment's headline: on the scene's first pictures for 2.5 s; after an opening talk take, on the
+    first pictures after it, with the scene's narration moved past it; never overlapping a spoken subtitle."""
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "headline": "Mayor bans Mondays citywide", "narration": "The mayor signed it at noon. Nobody objected.",
+         "narration_audio": str(media / "narr.wav"),
+         "shots": [{"kind": "talk", "clip": str(media / "talk1.mp4"), "line": LINE1},
+                   {"kind": "still", "path": str(media / "still1.png")}, {"kind": "action", "clip": str(media / "a.mp4")}]},
+        {"beat": "turn", "headline": "Ducks unionize", "shots": [{"kind": "still", "path": str(media / "still2.png")},
+                                                                  {"kind": "action", "clip": str(media / "b.mp4")}]},
+        {"beat": "sign_off", "shots": [{"kind": "action", "clip": str(media / "c.mp4")}]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    heads = report["headlines"]
+    assert [(h["scene"], h["text"]) for h in heads] == [(0, "Mayor bans Mondays citywide"), (1, "Ducks unionize")]
+    first = {s["scene"]: s for s in reversed(_shots(report))}
+    talk = next(s for s in _shots(report) if s["extra"].get("talk"))
+    assert abs(heads[0]["at"] - (talk["at"] + talk["frames"] / FPS)) < 1e-3   # right after the opening take
+    assert abs(heads[1]["at"] - first[1]["at"]) < 1e-3                         # on the scene's first shot
+    for h in heads:
+        assert h["dur"] == 2.5
+        for v in report["voice"]:
+            assert v["at"] >= h["at"] + h["dur"] - 1e-3 or v["at"] + v["played"] <= h["at"] + 1e-3, (h, v)
+    assert all(abs(v["played"] - v["file_dur"]) < 0.05 for v in report["voice"])
+    assert metrics(report)["cut_in_first08"] == 0
+    shown = [x for s in _shots(report) for x in s["extra"].get("headline", [])]
+    assert {x[0] for x in shown} == {h["text"] for h in heads}
+    assert not any(s["extra"].get("headline") for s in _shots(report) if s["scene"] == 2)
+
+
+def test_weekly_segment_scenes_carry_their_headline():
+    sb = S.normalize({"headline": "Week", "segments": [{"topic": "tech", "headline": "Robots learn to nap"}],
+                      "scenes": [{"act": "cold_open", "shots": [{"kind": "still", "prompt": "a clock"}]},
+                                 {"act": "setup", "topic": "tech", "caption": "Robots learn to nap",
+                                  "shots": [{"kind": "still", "prompt": "a robot asleep"}]}]})
+    shots = [{"id": s["id"], "scene": sc["id"], "kind": s["kind"], "cast": [], "line": "", "frame": "f.png",
+              "clip": None, "error": None} for sc in sb["scenes"] for s in sc["shots"]]
+    plan = R.edit_plan(sb, shots, Path("/m"))
+    assert [x.get("headline") for x in plan["scenes"]] == [None, "Robots learn to nap"]

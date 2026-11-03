@@ -199,3 +199,35 @@ def test_api_weekly_serves_the_manifest_and_week_files(tmp_path):
     assert weeks[0]["week"] == "2026-W44"
     r = client.get(weeks[0]["poster_url"])
     assert r.status_code == 200 and r.content == b"jpg"
+
+
+# -- the batch budget (live router stubbed: nothing is rendered or billed) ------------------------------
+
+class LiveStub:
+    mode = "live"
+
+
+def live_batch(tmp_path, monkeypatch):
+    """Every week gets W44's picks and the template storyboard (no writer); returns the week's estimate total."""
+    picks, _ = W.headlines("2026-W44", tmp_path / "src", use_google=False, fetch=fake_fetch)
+    monkeypatch.setattr(W, "headlines", lambda *a, **k: (picks, {}))
+    real = W.make_storyboard
+    monkeypatch.setattr(W, "make_storyboard", lambda week, p, minutes=1.0, mock=None: real(week, p, minutes, True))
+    sb = real("2026-W44", picks, 1.0, True)
+    return W.estimate_usd(sb, "480p", tmp_path)["total_usd"]
+
+
+def test_failed_week_counts_toward_the_batch_budget(tmp_path, monkeypatch):
+    from shot_director import render_storyboard as rs
+    est = live_batch(tmp_path, monkeypatch)
+    attempts = []
+
+    def render(sb, router, media, **k):
+        attempts.append(k.get("max_cost"))
+        raise RuntimeError("Router job failed half-way")
+    monkeypatch.setattr(rs, "render", render)
+    res = W.run(["2026-W40", "2026-W41", "2026-W42"], tmp_path, router=LiveStub(), budget_usd=est * 2.5,
+                allow_unfinished=True, out=open("/dev/null", "w"))
+    assert [w["status"] for w in res["weeks"]] == ["failed", "failed", "budget_stop"]
+    assert len(attempts) == 2 and res["spent_usd"] == round(est * 2, 2)
+    assert attempts == [pytest.approx(est * 2.5), pytest.approx(est * 1.5)]   # the 2nd cap excludes the 1st week

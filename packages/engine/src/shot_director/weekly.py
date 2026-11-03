@@ -731,7 +731,9 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
     media = Path(media)
     spent, results = 0.0, []
     live = router is not None and router.mode == "live"
+    from . import render_storyboard as rs
     for week in weeks:
+        at_risk = 0.0   # USD this week may already have spent if it fails part-way (counted on failure, live only)
         if not allow_unfinished and not finished(week):
             print(f"{week}: not over yet, skipped", file=out)
             results.append({"week": week, "status": "skipped", "reason": "unfinished"})
@@ -747,6 +749,7 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                     print(f"{week}: budget stop (spent ${spent:.2f} of ${budget_usd:.2f})", file=out)
                     results.append({"week": week, "status": "budget_stop"})
                     break
+                at_risk = float(est)
                 m = retry_week(week, media, router, max_cost=budget_usd - spent if live else None)
             else:
                 if not plan_only and not force and meta.get("status") == "done":
@@ -769,6 +772,7 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                     results.append({"week": week, "status": "budget_stop"})
                     _ledger(media, {"week": week, "action": "budget_stop", "spent": round(spent, 2)})
                     break
+                at_risk = float(est)
                 m = render_week(week, media, router, minutes, quality,
                                 max_cost=(budget_usd - spent) if live else None, plan=plan)
             # the budget counts USD estimates: the Router's X-Comfy-Credits-Used header is in credits, not dollars
@@ -783,10 +787,15 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                             "cost_estimate": m.get("cost_estimate"), "credits_used": m.get("credits_used"),
                             "spent_total": round(spent, 2)})
         except Exception as e:  # noqa: BLE001 - one bad week never stops the batch
+            # a render that failed part-way has spent part of its estimate: count all of it, so the budget holds
+            # (credits_used is in credits, not dollars). A cost-cap refusal happens before any spend.
+            cost = at_risk if live and not isinstance(e, rs.CostCapExceeded) else 0.0
+            spent += cost
             print(f"{week}: FAILED {type(e).__name__}: {e}"[:300], file=out)
-            results.append({"week": week, "status": "failed", "error": f"{type(e).__name__}: {e}"[:300]})
+            results.append({"week": week, "status": "failed", "error": f"{type(e).__name__}: {e}"[:300], "cost": cost})
             _ledger(media, {"week": week, "action": "retry" if retry else ("plan" if plan_only else "render"),
-                            "status": "failed", "error": f"{type(e).__name__}: {e}"[:300]})
+                            "status": "failed", "error": f"{type(e).__name__}: {e}"[:300], "cost_counted": cost,
+                            "spent_total": round(spent, 2)})
     published = publish(media, weeks) if do_publish else []
     if published:
         print(f"published: {', '.join(published)}", file=out)

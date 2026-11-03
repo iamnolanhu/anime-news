@@ -668,7 +668,7 @@ def write_weekly(segments: list[dict], minutes: float = 1.0, headline: str = "",
     rules = WEEKLY_RULES.format(n=len(shape["segments"]), plan="\n".join(plan_lines), markets=MARKETS_CAPTION,
                                 sign_off=SIGN_OFF)
     n = len(shape["scenes"])
-    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(), scenes=n,
+    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(default_cast()), scenes=n,
                                   acts=", ".join(sc["act"] for sc in shape["scenes"]),
                                   shots=sum(len(sc["shots"]) for sc in shape["scenes"]), sign_off=SIGN_OFF,
                                   moves=", ".join(MOVES),

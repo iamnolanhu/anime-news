@@ -299,3 +299,20 @@ def test_retry_is_admitted_and_counted_at_the_failed_shots_cost(tmp_path, monkey
     assert res["weeks"][0]["status"] == "done"                  # admitted: the failed shot fits the budget
     assert res["weeks"][0]["cost"] == pytest.approx(retry_usd) and res["spent_usd"] == round(retry_usd, 2)
     assert caps == [pytest.approx(full * 0.5)]
+
+
+def test_weekly_writer_builds_its_prompt_with_the_cast(monkeypatch):
+    """write_weekly must reach the writer call (it once crashed building the cast block)."""
+    from shot_director import storyboard, writer
+
+    def boom(*a, **k):
+        raise RuntimeError("stop before the network")
+
+    monkeypatch.setattr(writer, "_chat", boom)
+    segs = [{"topic": t, "headline": f"{t} headline", "source_text": ""} for t in ("ai", "crypto", "politics", "tech", "markets")]
+    try:
+        storyboard.write_weekly(segs, minutes=1.0, headline="Weekly", week="2026-W44")
+    except RuntimeError as e:
+        assert "stop before the network" in str(e)
+    else:
+        raise AssertionError("the patched writer should have been reached")

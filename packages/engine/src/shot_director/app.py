@@ -402,6 +402,9 @@ def create_app(media: Path | None = None) -> FastAPI:
         except Exception as e:  # noqa: BLE001 - network, 402, timeouts: the writer failed
             refund_if_unpaid()
             raise HTTPException(502, f"writer failed: {type(e).__name__}: {str(e)[:300]}") from e
+        if charged:   # a validation retry bills a second writer call: charge every billed call, not just the first
+            for _ in range(max(0, writer.paid_calls() - paid0 - 1)):
+                usage.charge(charged[0], "storyboards", charged[2])
         return {"storyboard": sb, "stats": storyboard.stats(sb)}
 
     @app.post("/api/render", dependencies=[EPISODE])

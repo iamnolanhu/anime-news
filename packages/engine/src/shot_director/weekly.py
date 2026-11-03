@@ -797,6 +797,7 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                     # shot count, and its total is the render estimate plus the writer call
                     picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral)
                     need = estimate_usd(make_storyboard(week, picks, minutes, mock=True), quality, media)["total_usd"]
+                    need += rs.PRICE["writer"]   # headroom for a second billed writer attempt (a rejected, retried reply)
                     if spent + need > budget_usd:
                         print(f"{week}: budget stop before the writer (spent ${spent:.2f}, this week about "
                               f"${need:.2f}, budget ${budget_usd:.2f})", file=out)

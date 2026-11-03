@@ -1,6 +1,6 @@
 # Anime News
 
-A headline in, an anime news episode out. Anime News writes a storyboard from a news headline, renders a start frame and a Seedance shot for every beat through Comfy Router, and cuts them into a fast anime news episode, on your own machine with your own key.
+**THE WEEKLY BRIEFING**: a week of headlines in, one anime briefing out. Every week, five headlines, one episode. Anime News writes a storyboard from a headline (or a week of them), renders a start frame and a Seedance shot for every beat through Comfy Router, and cuts them into a fast anime episode, on your own machine with your own key.
 
 **Site:** https://anime-news-nine.vercel.app ([episodes](https://anime-news-nine.vercel.app/episodes), [studio](https://anime-news-nine.vercel.app/studio))
 
@@ -30,8 +30,7 @@ The show is **THE WEEKLY BRIEFING**: one episode per week with that week's top h
 politics, tech, markets), signed off "Back next week." `anime-news weekly --week 2026-W44` builds one; `--weeks 2026-W01..2026-W44`
 backfills the year. Details, the manifest shape and the backfill run: [docs/WEEKLY.md](docs/WEEKLY.md).
 
-An hourly self-running channel still exists in the code (`shot-director-episode --loop --every 60m`, or `SHOT_DIRECTOR_AUTO=1`
-on the server). It is optional and off by default; we may turn it on if we get sponsored compute.
+The hourly loop (`shot-director-episode --loop --every 60m`, or `SHOT_DIRECTOR_AUTO=1`) still exists in the code and is off by default.
 
 ## Your key stays on your machine
 
@@ -84,7 +83,7 @@ The pipeline, one episode:
 3. **Stills.** Every shot gets its own FLUX start frame from its own prompt and the cast sheet.
 4. **Shots.** Each frame becomes a Seedance clip: talking takes carry their own voice, action takes carry the motion. Shots render in parallel.
 5. **Sound.** Narration through ElevenLabs on Comfy Router, a music bed with a riser and drop, whooshes and impacts on scene changes.
-6. **The cut.** ffmpeg cuts 35 to 42 times a minute with subtitles, the series title after the cold open and a countdown. No source moment is shown twice. Output in 16:9 and 9:16.
+6. **The cut.** ffmpeg cuts 35 to 42 times a minute with subtitles, the series title after the cold open. No source moment is shown twice. Output in 16:9 and 9:16.
 
 ## Engine API
 

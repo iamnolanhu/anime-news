@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anime News: episodes</title>
-<meta name="description" content="Anime News turns the day's news into short anime episodes on Comfy Router. Every finished episode, newest first.">
+<meta name="description" content="The Weekly Briefing: one anime episode per week, five headlines each, on Comfy Router. Every finished episode, newest first.">
 <style>
   :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; }
   * { box-sizing: border-box; }
@@ -38,8 +38,8 @@
   <span id="status"></span>
 </header>
 <div class="gallery-head">
-  <p>The Weekly Briefing: each episode starts from a real trending headline and is written, drawn, animated, cut and scored on Comfy Router. Newest first.</p>
-  <button class="primary" id="render">Render the next episode</button>
+  <p>The Weekly Briefing: each episode covers one ISO week of top headlines and is written, drawn, animated, cut and scored on Comfy Router. Newest first.</p>
+  <button class="primary" id="render">Render this week's episode</button>
 </div>
 <main id="episodes" class="gallery" aria-live="polite"></main>
 <div id="empty" class="empty" hidden>No finished episodes yet.</div>
@@ -97,7 +97,7 @@ async function load() {
 $("render").onclick = async () => {
   const btn = $("render");
   btn.disabled = true;
-  status("Requesting an episode (about 10 minutes when live)...");
+  status("Requesting an episode (about 10 minutes with a real key)...");
   track("episode_requested", { from: "gallery" });
   try {
     const started = Date.now();

@@ -180,7 +180,7 @@ Seedance output is 24 fps and the edit adds the chop; edit mode breaks lip sync 
 |---|---|---|
 | 07:30-08:00 (0.5 h) | Read Router price for Seedance 2.5 and the 7 others; load schema into `router_client.py` (Seedance body: `content[]`, `duration`, `generate_audio`, `ratio`, `draft`). | One draft call returns a 480p mp4 |
 | 08:00-09:00 (1 h) | Bake-off (D5): same still, 7 clips, rubric scored, engine chosen. In parallel: write one ElevenLabs line. | Table with scores in `docs/` |
-| 09:00-10:00 (1 h) | Writer v2: series bible + 5-act script JSON, Sonnet call, validator for schema. | Script for tonight's news item parses |
+| 09:00-10:00 (1 h) | Writer v2: series bible + 5-act script JSON, Sonnet call, validator for schema. | Script for this week's headline parses |
 | 10:00-10:30 (0.5 h) | Music kit: download Kulakovka track (license URL in credits.txt), generate 3 `eleven_sfx_v2` stingers, build 4-part score cue. | 60 s score file at -14 LUFS |
 | 10:30-11:15 (0.75 h) | Style + character sheets once (FLUX 3), 3 contact sheets, auto-slice, reject bad panels. | 18 usable stills with IDs |
 | 11:15-12:15 (1 h, overlaps) | Seedance calls: 2 talking + 2 action, draft first then final. | 4 clips trimmed to beats |

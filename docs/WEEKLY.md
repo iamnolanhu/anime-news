@@ -134,4 +134,3 @@ Spend (estimate, cast assets already cached): about **$11 per week at 1 minute /
 action clips at $0.149 per second, 20 images) and about **$46 per week at 3 minutes / 720p**. The full 2026 backfill
 (44 weeks) is about $500 at 1 minute / 480p, so the default $100 budget stops after 8 or 9 weeks.
 
-The hourly channel (`shot-director-episode --loop`, `SHOT_DIRECTOR_AUTO=1`) still exists and stays off by default.

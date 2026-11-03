@@ -116,12 +116,12 @@ def _media_path(name: str) -> Path:
     return p
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])  # HEAD: link previews and uptime checks
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
-@app.get("/episodes")
+@app.api_route("/episodes", methods=["GET", "HEAD"])
 def episodes_page() -> FileResponse:
     return FileResponse(STATIC / "episodes.html")
 

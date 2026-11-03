@@ -267,7 +267,14 @@ def _fetch(topics: list[str], hours: int) -> list[dict]:
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         rows = [r for batch in pool.map(one, topics) for r in batch]
-    items = [it for it in (_to_item(r) for r in rows) if it and _fresh(it, hours)
+    def safe_item(r):
+        try:
+            return _to_item(r)
+        except Exception as e:  # a malformed engine row never aborts selection; it just contributes nothing
+            errors.append(f"row: {type(e).__name__}: {e}"[:200])
+            return None
+
+    items = [it for it in (safe_item(r) for r in rows) if it and _fresh(it, hours)
              and not _somber(it["title"])]
     items.sort(key=lambda it: it["engagement"], reverse=True)
     kept: list[dict] = []

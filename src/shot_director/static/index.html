@@ -69,6 +69,11 @@
       <div class="fragment" id="moveFrag"></div>
       <label for="scene">Scene (optional)</label>
       <textarea id="scene" placeholder="the astronaut turns toward the city lights"></textarea>
+    </section>
+    <section>
+      <h2>4. Engine (per shot)</h2>
+      <div class="grid" id="engines"></div>
+      <div class="fragment" id="engineFrag"></div>
       <button class="primary" id="shoot">Generate shot</button>
     </section>
   </div>
@@ -89,7 +94,7 @@
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { body: "35mm", move: "dolly_in", frame: null, presets: null, max: 3 };
+const state = { body: "35mm", move: "dolly_in", engine: null, frame: null, presets: null, max: 3 };
 
 function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
 
@@ -119,7 +124,7 @@ function renderQueue(shots) {
     const s = shots[i], d = document.createElement("div");
     d.className = "slot";
     if (s) {
-      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}</div>`;
+      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}<br>${s.engine || ""}${s.continued ? " (continues shot " + i + ")" : ""}</div>`;
       d.title = s.prompt;
     } else {
       d.textContent = `Shot ${i + 1}`;
@@ -147,9 +152,9 @@ $("genFrame").onclick = () => busy($("genFrame"), "Generating start frame...", a
     body: JSON.stringify({ prompt, body: state.body }) }));
 });
 
-$("shoot").onclick = () => busy($("shoot"), "Generating shot (live mode can take a minute)...", async () => {
+$("shoot").onclick = () => busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
   await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame }) });
+    body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame, engine: state.engine }) });
   renderQueue((await api("/api/queue")).shots);
 });
 
@@ -168,6 +173,9 @@ $("clear").onclick = async () => { renderQueue((await api("/api/queue", { method
   $("models").textContent = `${p.image_model} -> ${p.video_model}`;
   chips($("bodies"), p.bodies, "body", $("bodyFrag"));
   chips($("moves"), p.moves, "move", $("moveFrag"));
+  const engines = (p.engines || []).map((e) => ({ id: e.id, label: `${e.label} (${e.time})`, fragment: `${e.id}: ${e.best_for}` }));
+  state.engine = engines.some((e) => e.id === p.video_model) ? p.video_model : (engines[0] || {}).id;
+  chips($("engines"), engines, "engine", $("engineFrag"));
   renderQueue((await api("/api/queue")).shots);
 })().catch((e) => status(e.message, true));
 </script>

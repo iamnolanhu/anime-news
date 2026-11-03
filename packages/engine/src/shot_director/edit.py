@@ -410,25 +410,11 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         usable = list(dict.fromkeys(p for p, of in stills if p not in used_stills and not (clip_segs and of in info)))
         if not clip_segs and not usable:
             continue
-        # the sharpest gate-passing window opens the scene; the rest round-robin across the clips
-        clip_segs.sort(key=lambda x: -x[0])
-        opener = [clip_segs[0][1]] if clip_segs else []
-        rest = [s for _, s in clip_segs[1:]]
-        by_src: dict[str, list[Seg]] = {}
-        for s in rest:
-            by_src.setdefault(s.src, []).append(s)
-        order: list[Seg] = []
-        while any(by_src.values()):
-            for src in list(by_src):
-                if by_src[src]:
-                    order.append(by_src[src].pop(-1 if len(order) % 2 else 0))
-        ordered = opener + order
-        # never let a smeared tail end a scene: the sharpest-ending non-opener segment goes last
-        if len(ordered) > 2:
-            tail = max(ordered[1:], key=lambda x: sharpness(x.src, x.start + x.extra["src_dur"] - 0.08)
-                       / max(1.0, x.extra.get("sharp_median", 1.0)))
-            ordered.remove(tail)
-            ordered.append(tail)
+        # forward progression (R1-R3): the clips in plan (storyboard) order, each clip one contiguous run, its
+        # windows in ascending source time. The scene opens on its first clip's earliest gate-passing window.
+        rank = {c: i for i, c in enumerate(info)}
+        ordered = [s for _, s in sorted(clip_segs, key=lambda x: (rank[x[1].src], x[1].start))]
+        opener = ordered[:1]
         if opener:
             opener[0].motion = "punch"
         # one speed ramp per scene, on the 2nd clip segment (or the only one)
@@ -507,10 +493,6 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 burst.append(Seg("clip", BURST_FRAMES, src=src, start=st, caption=cap, scene=si,
                                  extra={"src_dur": bl, "burst": True}))
             body = body[:-1] + burst + body[-1:] if len(body) > 1 else body + burst
-        crt = next((s for s in body if s.kind == "crt"), None)
-        if crt:   # the CRT shot is the transition: it plays first
-            body.remove(crt)
-            body.insert(0, crt)
         # 1-frame black on hard beats: before the speed ramp and before the scene's last shot
         final: list[Seg] = []
         for i, s in enumerate(body):

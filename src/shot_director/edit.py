@@ -27,8 +27,12 @@ from pathlib import Path
 log = logging.getLogger("shot_director.edit")
 
 GOLD = "0xF5C518"
-END_CARD_TEXT = "Shot Director · open source · #OpenSourceHiggsfield"
-WORDMARK = os.environ.get("SHOT_DIRECTOR_WORDMARK", "SHOT DIRECTOR")
+END_CARD_TEXT = "ANIME NEWS · open source · #OpenSourceHiggsfield"
+WORDMARK = os.environ.get("SHOT_DIRECTOR_WORDMARK", "ANIME NEWS")
+# Brand mark drawn before the wordmark (~28 px at 720p; an-mark-small.png has strokes weighted for small sizes). Optional: a missing file or an empty
+# SHOT_DIRECTOR_WORDMARK_MARK skips the mark and the cut still renders.
+WORDMARK_MARK = os.environ.get("SHOT_DIRECTOR_WORDMARK_MARK",
+                               str(Path(__file__).parent / "static" / "brand" / "an-mark-small.png"))
 TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
 CLIP_SEG = (1.6, 2.5)      # output seconds of a clip segment (formula: avg shot 1.3-1.8 s, never > 2.5)
@@ -368,8 +372,17 @@ def _wordmark(font: str, workdir: Path, H: int) -> str:
     if not tf.exists():
         tf.write_text(WORDMARK)
     fontopt = f"fontfile={_q(font)}:" if font else ""
-    return (f",drawtext={fontopt}textfile={_q(tf)}:expansion=none:fontsize={max(14, H // 40)}:fontcolor={GOLD}"
-            f":shadowcolor=black@0.8:shadowx=2:shadowy=2:x={H // 30}:y={H // 30}")
+    size, pad = max(14, H // 40), H // 30
+    x = pad
+    mark = ""
+    if WORDMARK_MARK and Path(WORDMARK_MARK).is_file():
+        m = max(16, H * 28 // 720)
+        x = pad + m + max(4, m // 4)
+        # the PNG is one frame; overlay repeats it for the whole segment (eof_action defaults to repeat)
+        mark = (f"[wmbase];movie={_q(WORDMARK_MARK)},scale={m}:{m}:flags=lanczos,format=rgba[wmmark];"
+                f"[wmbase][wmmark]overlay=x={pad}:y={max(0, pad + size // 2 - m // 2)}:format=auto")
+    return (f",drawtext={fontopt}textfile={_q(tf)}:expansion=none:fontsize={size}:fontcolor={GOLD}"
+            f":shadowcolor=black@0.8:shadowx=2:shadowy=2:x={x}:y={pad}" + mark)
 
 
 def _card_filter(lines: list[tuple[str, int, str, str]], font: str, workdir: Path, idx: int) -> str:
@@ -428,7 +441,7 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
         cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c={color}:s={W}x{H}:r={fps}"] + enc
     elif s.kind in ("title", "end"):
         if s.kind == "title":
-            title = _wrap_caption(plan.get("title", "Shot Director"), 28)
+            title = _wrap_caption(plan.get("title", "Anime News"), 28)
             logline = "\n".join(textwrap.wrap(plan.get("logline", ""), 60)[:2])
             lines = [(title, H // 10, "white", f"h/2-text_h-{H // 30}"),
                      (logline, H // 28, GOLD, f"h/2+{H // 18}")]

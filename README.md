@@ -1,4 +1,6 @@
-# Shot Director
+# Anime News
+
+Anime News turns the day's top headline into a short anime news episode, and its studio lets you direct single shots by hand. Live at https://your-site.example. The engine and CLI underneath were built as **Shot Director**, its former working name, so the commands (`shot-director`, `shot-director-episode`, `shot-director-cut`), the Python package and the `SHOT_DIRECTOR_*` variables keep that name. Brand rules: THEME.md, "Brand: Anime News".
 
 An open-source mini "Cinema Studio": pick a start frame, a camera body and a camera move, and get an AI video shot. Queue three shots and stitch them into one sequence.
 

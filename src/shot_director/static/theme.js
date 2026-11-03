@@ -1,7 +1,7 @@
-/* Shot Director theme motion: particle field + anime.js micro-animations.
+/* Anime News theme motion: particle field, header ident + anime.js micro-animations.
    Uses the vendored anime.js v3 (window.anime). If anime.js is missing every call
    below is a silent no-op; the particle field is plain canvas and needs no library.
-   Public API: window.theme = { burst(el), scan(el, on), pulse(el), land(el), enabled } */
+   Public API: window.theme = { burst(el), scan(el, on), pulse(el), land(el), ident(), enabled } */
 (function () {
   "use strict";
 
@@ -172,9 +172,69 @@
     A({ targets: el, opacity: [0, 1], translateX: [-24, 0], scale: [0.96, 1], duration: 560, easing: "easeOutQuint" });
   });
 
-  window.theme = { burst: burst, scan: scan, pulse: pulse, land: land, enabled: !!A && !reduced() };
+  /* ---------- (f) Anime News ident: 1.2 s station ident on the header mark ----------
+     0-800 ms strokes draw (per face, 90 ms apart) · 450-900 ms glow blooms and settles ·
+     860 ms one horizontal glitch slice (two clipped copies, 3 px apart) held 120 ms · then static.
+     Hover breathing is CSS (theme.css). Reduced motion or no anime.js = the static mark. */
+  var IDENT = { draw: 620, faceStagger: 90, bloomAt: 450, bloom: 450, glitchAt: 860, glitch: 120, slicePx: 3 };
+  var FACES = ["#an-face-left", "#an-face-top", "#an-face-base"];
+  var ident = safe(function () {
+    var wrap = document.querySelector(".an-mark-wrap");
+    var svg = wrap && wrap.querySelector("svg");
+    if (!A || !svg || reduced()) return;
+    var word = document.querySelector(".an-lockup .wordmark");
+    var draws = svg.querySelectorAll("use.an-draw");
+    var fill = svg.querySelector(".an-scanfill");
+    for (var i = 0; i < draws.length; i++) { draws[i].style.strokeDasharray = "1 1"; draws[i].style.strokeDashoffset = "1"; }
+    if (fill) fill.style.opacity = "0";
+    if (word) word.style.opacity = "0";
+    var faceOf = function (el) { return Math.max(0, FACES.indexOf(el.getAttribute("href"))); };
+    var tl = A.timeline({ easing: "easeOutCubic" });
+    tl.add({ targets: draws, strokeDashoffset: [1, 0], duration: IDENT.draw,
+             delay: function (el) { return faceOf(el) * IDENT.faceStagger; } }, 0)
+      .add({ targets: word, opacity: [0, 1], translateX: [-6, 0], duration: 500 }, 300)
+      .add({ targets: fill, opacity: [0, 0.16], duration: 300 }, 500)
+      .add({ targets: { k: 0 }, k: 1, duration: IDENT.bloom, easing: "linear",
+             update: function (a) {
+               var k = Math.sin(a.progress / 100 * Math.PI);          // up, then back down
+               svg.style.filter = "drop-shadow(0 0 " + (3 + 10 * k).toFixed(1) + "px rgba(255,229,102," + (0.5 + 0.45 * k).toFixed(2) + "))";
+             } }, IDENT.bloomAt)
+      .add({ targets: { g: 0 }, g: 1, duration: IDENT.glitch, begin: glitch, complete: unglitch }, IDENT.glitchAt);
+    tl.finished.then(settle);
+    setTimeout(settle, 2500);   // anime.js pauses in hidden tabs; never leave the mark half drawn
+    var copies = [];
 
-  function boot() { initParticles(); enter(); }
+    function glitch() {
+      if (!svg.isConnected || copies.length) return;
+      var cuts = [["inset(0 0 54% 0)", IDENT.slicePx], ["inset(46% 0 0 0)", -IDENT.slicePx]];
+      copies = cuts.map(function (c) {
+        var s = svg.cloneNode(true);
+        s.classList.add("an-glitch-slice");
+        s.setAttribute("aria-hidden", "true");
+        s.style.clipPath = c[0];
+        s.style.transform = "translateX(" + c[1] + "px)";
+        wrap.appendChild(s);
+        return s;
+      });
+      svg.style.visibility = "hidden";
+    }
+    function unglitch() {
+      copies.forEach(function (s) { s.remove(); });
+      copies = [];
+      svg.style.visibility = "";
+    }
+    function settle() {
+      unglitch();
+      for (var j = 0; j < draws.length; j++) { draws[j].style.strokeDasharray = ""; draws[j].style.strokeDashoffset = ""; }
+      if (fill) fill.style.opacity = "";
+      if (word) { word.style.opacity = ""; word.style.transform = ""; }
+      svg.style.filter = "";
+    }
+  });
+
+  window.theme = { burst: burst, scan: scan, pulse: pulse, land: land, ident: ident, enabled: !!A && !reduced() };
+
+  function boot() { initParticles(); enter(); ident(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
 })();

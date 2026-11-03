@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 480 120" width="480" height="120" role="img" aria-label="Anime News">
+  <!-- Anime News header lockup: the mark (an-mark.svg) at 96 px, then the wordmark "ANIME NEWS"
+       in a condensed uppercase system stack, letter-spacing .12em, gold with a faint glow. -->
+  <svg x="8" y="12" width="96" height="96" viewBox="110 110 1280 1280">
+  <defs>
+    <path id="an-face-left" pathLength="1" d="M232 574 L545 390 L863 572 L557 754 L557 1136 L232 951"/>
+    <path id="an-face-top" pathLength="1" d="M614 347 L921 165 L1252 352 L1253 1082 L934 887 L933 527 Z"/>
+    <path id="an-face-base" pathLength="1" d="M617 792 L1238 1159 L923 1346 L617 1173 Z"/>
+    <linearGradient id="an-gold" gradientUnits="userSpaceOnUse" x1="0" y1="165" x2="0" y2="1346">
+      <stop offset="0" stop-color="#FFE566"/>
+      <stop offset=".45" stop-color="#F5C518"/>
+      <stop offset="1" stop-color="#C99700"/>
+    </linearGradient>
+    <pattern id="an-scan" patternUnits="userSpaceOnUse" width="24" height="24">
+      <rect width="24" height="8" fill="#F5C518"/>
+    </pattern>
+    <filter id="an-blur" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <g class="an-scanfill" fill="url(#an-scan)" stroke="none" opacity=".16">
+    <use href="#an-face-left" xlink:href="#an-face-left"/><use href="#an-face-top" xlink:href="#an-face-top"/><use href="#an-face-base" xlink:href="#an-face-base"/>
+  </g>
+  <g class="an-glow" fill="none" stroke="#FFE566" stroke-width="52" stroke-linejoin="miter" filter="url(#an-blur)" opacity=".55">
+    <use class="an-draw" href="#an-face-left" xlink:href="#an-face-left"/><use class="an-draw" href="#an-face-top" xlink:href="#an-face-top"/><use class="an-draw" href="#an-face-base" xlink:href="#an-face-base"/>
+  </g>
+  <g class="an-chroma" fill="none" stroke-width="26" stroke-linejoin="miter" opacity=".25">
+    <g transform="translate(-10 0)" stroke="#19E6FF">
+      <use class="an-draw" href="#an-face-left" xlink:href="#an-face-left"/><use class="an-draw" href="#an-face-top" xlink:href="#an-face-top"/><use class="an-draw" href="#an-face-base" xlink:href="#an-face-base"/>
+    </g>
+    <g transform="translate(10 0)" stroke="#FF2BD6">
+      <use class="an-draw" href="#an-face-left" xlink:href="#an-face-left"/><use class="an-draw" href="#an-face-top" xlink:href="#an-face-top"/><use class="an-draw" href="#an-face-base" xlink:href="#an-face-base"/>
+    </g>
+  </g>
+  <g class="an-stroke" fill="none" stroke="url(#an-gold)" stroke-width="26" stroke-linejoin="miter">
+    <use class="an-draw" href="#an-face-left" xlink:href="#an-face-left"/><use class="an-draw" href="#an-face-top" xlink:href="#an-face-top"/><use class="an-draw" href="#an-face-base" xlink:href="#an-face-base"/>
+  </g>
+  </svg>
+  <defs>
+    <filter id="an-text-glow" x="-10%" y="-40%" width="120%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <text x="128" y="78" fill="#F5C518" filter="url(#an-text-glow)"
+        font-family="'Avenir Next Condensed','Roboto Condensed','Arial Narrow','Helvetica Neue',Arial,sans-serif"
+        font-weight="700" font-size="52" letter-spacing="6.24">ANIME NEWS</text>
+</svg>

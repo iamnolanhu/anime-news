@@ -1,6 +1,6 @@
-# Shot Director theme: the studio, cyberpunk anime, gold
+# Anime News theme: cyberpunk anime, gold on black
 
-The Shot Director UI uses the the studio dark monotone brand with a gold accent, a cyberpunk anime
+The Anime News UI (engine: Shot Director) uses a dark monotone base with a gold accent, a cyberpunk anime
 treatment (scanlines, corner cuts, glows, speed lines) and a particle field. Motion runs on a vendored
 copy of anime.js. Everything works offline: no CDN, no web fonts.
 
@@ -102,7 +102,7 @@ onto these tokens at the bottom of `:root`, so the layout and the theme never di
 | Scan sweep | `theme.js` `theme.scan(el, on)` + `.fx-sweep` | A translucent gold light band sweeps across the card on a loop while it renders | duration in `scan()` |
 | Particles | `theme.js` particle field on `<canvas id="fx-particles">` | Gold motes drift upward with a slight sway, fading in and out; about 6% are flickering cyan sparks | `MAX_PARTICLES`, `CYAN_CHANCE` in `theme.js`; remove the canvas to disable |
 | Ticker | `index.html` `<div id="ticker" class="ticker" hidden>`, `theme.css` `.ticker*` | Holographic strip under the header: mono uppercase pale-gold text, gold/cyan gradient wash, edge fade, marquee that pauses on hover | `--sd-ticker-speed`; stays hidden while `[hidden]` is set or it is empty |
-| Wordmark | `index.html` `h1.wordmark`, `theme.css` `.wordmark` | `SHOT DIRECTOR`, white brand, glowing gold `//`, gold product name | `.wordmark` rules |
+| Lockup | `index.html`/`episodes.html` `a.an-lockup` (inline mark SVG + `h1.wordmark`), `theme.css` `.an-*`, `.wordmark` | The Anime News mark at 34 px, then `ANIME NEWS` in gold condensed caps; 1.2 s ident on load, breathing glow on hover | `--an-mark-size`, `--an-font-wordmark`, `IDENT` in `theme.js` |
 
 ### Filling the ticker
 
@@ -200,3 +200,67 @@ Change tokens only, in `:root` at the top of `theme.css`:
    `theme.js`.
 5. Particle colors follow `--sd-gold` and `--sd-cyan` automatically (read at load time).
 6. Keep the fallback palette in `index.html`'s inline `:root` in step if you change the brand colors.
+
+## Brand: Anime News
+
+The product is **Anime News** (wordmark `ANIME NEWS`, public URL https://your-site.example). The show
+inside it keeps its own series title, `THE HOURLY BRIEFING`, on each episode's cold open. Shot Director
+is the former working name of the engine: package, CLI entry points, routes and `SHOT_DIRECTOR_*`
+variables keep it. PostHog still tags events `app: shot-director` so analytics stay continuous across
+the rename; change it only together with the PostHog dashboards.
+
+### Files
+
+| File | Use |
+| --- | --- |
+| `static/brand/an-mark.svg` | The mark, vector, master. 1280-unit viewBox, tuned for 128 px and up |
+| `static/brand/an-mark.png` | 512 px transparent render of the SVG (headless Chrome) |
+| `static/brand/an-mark-small.png` | 128 px render with header stroke weights, for 16 to 64 px uses (the episode overlay) |
+| `static/brand/an-wordmark.svg` | Lockup: mark + `ANIME NEWS` |
+| `index.html`, `episodes.html` | The same mark inlined in the header so `theme.js` can animate its strokes |
+
+### Mark construction
+
+Three isometric faces of an open cube, each a single stroked path: a left face whose outer vertical edge
+is left open, a tall top-right face, and a rhombus base. Compared with the cube line mark it grew from,
+the faces are pushed apart (left face -30/+6, top face +16/-24, base +8/+30 units) so the gaps survive
+a thick stroke and the shape reads as its own mark. Paths live once in `<defs>` and every layer `<use>`s
+them, so a change to one face changes every layer.
+
+### Treatment (back to front)
+
+1. **Scanline fill:** each face filled with a gold horizontal-line pattern (8 on, 16 off) at 16 % opacity.
+2. **Glow:** the faces stroked in pale gold `#FFE566`, wide, Gaussian-blurred, at 55 %.
+3. **Chromatic edge:** a cyan `#19E6FF` copy shifted left and a magenta `#FF2BD6` copy shifted right, at
+   25 % (about 1 to 2 px at 512 px). This is the only place magenta appears.
+4. **Stroke:** a vertical gold gradient, `#FFE566` at the top through `#F5C518` to `#C99700` at the base,
+   mitred joins.
+
+Small sizes (the 34 px header, the 28 px episode overlay) thicken the strokes through CSS (`.an-lockup`
+rules in `theme.css`, the same values baked into `an-mark-small.png`); the SVG's own weights would
+vanish below about 64 px.
+
+### Animation (theme.js `ident()`, constants in `IDENT`)
+
+| Time | What happens |
+| --- | --- |
+| 0 to 800 ms | The strokes draw on (stroke-dashoffset 1 to 0), one face after another, 90 ms apart |
+| 300 to 800 ms | The wordmark fades in and slides 6 px into place; the scanline fill fades up |
+| 450 to 900 ms | The glow blooms (drop-shadow 3 to 13 px) and settles back |
+| 860 to 980 ms | One glitch slice: the mark splits at mid-height, top half 3 px right, bottom half 3 px left |
+| after | Static. Hover or keyboard focus: the glow breathes, one breath per 2 s |
+
+`prefers-reduced-motion: reduce` or a missing anime.js shows the static mark with no ident and no
+breathing. A 2.5 s safety timer always restores the static mark (anime.js pauses in hidden tabs).
+
+### Do and don't
+
+- Do keep the mark gold on black. Cyan and magenta only as the faint chromatic edge.
+- Do use `an-mark-small.png` (or the CSS stroke weights) below 64 px.
+- Do keep the ident to one play per page load, about 1.2 s; it is a station ident, not a loop.
+- Don't add more glitch: one slice, 120 ms. No noise, no constant flicker.
+- Don't bring back the parent company's name or logo anywhere in the product: name, wordmark, logo, page titles, footer,
+  episode wordmark or end card.
+- Don't rename the package, CLI or routes to match the brand without a migration plan; the brand lives
+  in visible text and these files.
+

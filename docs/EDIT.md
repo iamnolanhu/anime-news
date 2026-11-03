@@ -69,9 +69,11 @@ beat; `"action": true` marks one explicitly.
 10. **Subtitles** use the brand yellow #F5C518 on a dark translucent box, bottom-center, one clause at
     a time. The scene caption is split on commas, semicolons, colons, sentence ends and dashes, with at
     most 8 words per chunk, and the clauses are spread in order across the scene's cuts.
-11. **Wordmark:** "SHOT DIRECTOR", small and gold, top-left, on every frame except
-    the flash and black frames. Override it with the `SHOT_DIRECTOR_WORDMARK` environment variable.
-12. **End card:** "Shot Director · open source · #OpenSourceHiggsfield" with a gold rule.
+11. **Wordmark:** "ANIME NEWS", small and gold, top-left, after the 28 px gold cube mark
+    (`static/brand/an-mark-small.png`, overlaid with ffmpeg), on every frame except the flash and
+    black frames. Override the text with `SHOT_DIRECTOR_WORDMARK` and the mark with
+    `SHOT_DIRECTOR_WORDMARK_MARK`; an empty value or a missing file drops the mark and the cut still renders.
+12. **End card:** "ANIME NEWS · open source · #OpenSourceHiggsfield" with a gold rule.
 13. Output is 1280x720 at 24 fps unless the plan's `size`/`fps` say otherwise. Video is H.264 (yuv420p),
     audio is AAC 48 kHz stereo, with `+faststart`.
 

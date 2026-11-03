@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shot Director</title>
+<title>Anime News</title>
 <style>
-  /* base layout; fallback palette = brand gold, used only if theme.css fails to load */
+  /* base layout; fallback palette = Anime News gold, used only if theme.css fails to load */
   :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
@@ -63,7 +63,7 @@ posthog.register({app: "shot-director"});
 <body>
 <canvas id="fx-particles" aria-hidden="true"></canvas>
 <header>
-  <img src="/static/logo-white.png" alt="" style="height:22px;width:22px;object-fit:contain;vertical-align:middle;margin-right:8px"><h1 class="wordmark"><span class="wm-brand">the studio</span><span class="wm-sep">//</span><span class="wm-product">Shot Director</span></h1>
+  <a class="an-lockup" href="/" aria-label="Anime News home"><span class="an-mark-wrap"><svg xmlns="http://www.w3.org/2000/svg" class="an-mark" viewBox="110 110 1280 1280" aria-hidden="true" focusable="false"><defs><path id="an-face-left" pathLength="1" d="M232 574 L545 390 L863 572 L557 754 L557 1136 L232 951"/><path id="an-face-top" pathLength="1" d="M614 347 L921 165 L1252 352 L1253 1082 L934 887 L933 527 Z"/><path id="an-face-base" pathLength="1" d="M617 792 L1238 1159 L923 1346 L617 1173 Z"/><linearGradient id="an-gold" gradientUnits="userSpaceOnUse" x1="0" y1="165" x2="0" y2="1346"><stop offset="0" stop-color="#FFE566"/><stop offset=".45" stop-color="#F5C518"/><stop offset="1" stop-color="#C99700"/></linearGradient><pattern id="an-scan" patternUnits="userSpaceOnUse" width="24" height="24"><rect width="24" height="8" fill="#F5C518"/></pattern><filter id="an-blur" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="22"/></filter></defs><g class="an-scanfill" fill="url(#an-scan)" stroke="none" opacity=".16"><use href="#an-face-left"/><use href="#an-face-top"/><use href="#an-face-base"/></g><g class="an-glow" fill="none" stroke="#FFE566" stroke-width="52" stroke-linejoin="miter" filter="url(#an-blur)" opacity=".55"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g><g class="an-chroma" fill="none" stroke-width="26" stroke-linejoin="miter" opacity=".25"><g transform="translate(-10 0)" stroke="#19E6FF"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g><g transform="translate(10 0)" stroke="#FF2BD6"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g></g><g class="an-stroke" fill="none" stroke="url(#an-gold)" stroke-width="26" stroke-linejoin="miter"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g></svg></span><h1 class="wordmark">Anime News</h1></a>
   <span id="mode" class="badge">...</span>
   <span class="badge" id="models"></span>
   <a class="nav-link" href="/episodes">Episodes</a>
@@ -118,7 +118,7 @@ posthog.register({app: "shot-director"});
     </section>
   </div>
 </main>
-<footer class="site-foot">Built for Open Source Higgsfield · Comfy Build Night NYC · #OpenSourceHiggsfield · MIT · <a id="repo-link" href="#">repo link coming soon</a> · <a href="/episodes">Episodes</a></footer>
+<footer class="site-foot">Anime News · open source · #OpenSourceHiggsfield · MIT · <a id="repo-link" href="#">repo link coming soon</a> · <a href="/episodes">Episodes</a></footer>
 <script>
 const $ = (id) => document.getElementById(id);
 // theme hooks (theme.js); no-ops if the theme or anime.js did not load

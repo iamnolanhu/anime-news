@@ -1,0 +1,46 @@
+{
+  "episodes": [
+    {
+      "slug": "spam-factory",
+      "title": "Operation Spamputer",
+      "headline": "Billionaire says he is taking over an old Spam factory to expand his AI supercomputer complex",
+      "date": "2026-11-03",
+      "duration": 57.6,
+      "shots": 39,
+      "cutsPerMinute": 40.6,
+      "reusedShots": 0,
+      "video": "/episodes/spam-factory.mp4",
+      "vertical": "/episodes/spam-factory-9x16.mp4",
+      "poster": "/episodes/spam-factory.jpg",
+      "verticalPoster": "/episodes/spam-factory-9x16.jpg"
+    },
+    {
+      "slug": "fridges-cyberwar",
+      "title": "The Great Thaw",
+      "headline": "New cyberattack on supermarket fridges sweeps across Europe",
+      "date": "2026-11-03",
+      "duration": 52.9,
+      "shots": 34,
+      "cutsPerMinute": 38.6,
+      "reusedShots": 0,
+      "video": "/episodes/fridges-cyberwar.mp4",
+      "vertical": "/episodes/fridges-cyberwar-9x16.mp4",
+      "poster": "/episodes/fridges-cyberwar.jpg",
+      "verticalPoster": "/episodes/fridges-cyberwar-9x16.jpg"
+    },
+    {
+      "slug": "crypto-heist",
+      "title": "The Great Fumble",
+      "headline": "Frantic Binance Hackers Created Windfall for Fast Crypto Traders",
+      "date": "2026-11-03",
+      "duration": 55.0,
+      "shots": 36,
+      "cutsPerMinute": 39.2,
+      "reusedShots": 0,
+      "video": "/episodes/crypto-heist.mp4",
+      "vertical": "/episodes/crypto-heist-9x16.mp4",
+      "poster": "/episodes/crypto-heist.jpg",
+      "verticalPoster": "/episodes/crypto-heist-9x16.jpg"
+    }
+  ]
+}

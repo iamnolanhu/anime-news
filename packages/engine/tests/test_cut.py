@@ -30,12 +30,14 @@ def test_cut_has_no_reused_moments(tmp_path):
     start_frames = {r["frame"] for r in shots if r["clip"]}
     assert not start_frames & {Path(s["src"]).name for s in report["timeline"] if s["kind"] == "still"}
     assert any(s["caption"] for s in report["timeline"])           # captions are on
-    assert report["shots"] >= 10
+    assert report["shots"] >= len(shots)                            # every shot at least once (a clip: once per angle)
     ledger = json.loads((media / "episodes.json").read_text())
     assert ledger[-1]["headline"] == "Mayor bans Mondays" and ledger[-1]["cuts_per_minute"]
 
 
-def test_edit_plan_groups_talk_and_cutins():
+def test_edit_plan_keeps_storyboard_scenes_whole():
+    """One edit scene per storyboard scene, its shots in storyboard order (talk, action, stills and inserts mixed),
+    every rendered shot once; the countdown only when the storyboard names one."""
     sb = S.build("Mayor bans Mondays", minutes=1)
     shots = []
     for sc in sb["scenes"]:
@@ -45,13 +47,13 @@ def test_edit_plan_groups_talk_and_cutins():
                           "line": s.get("line", ""), "frame": f"f-{s['id']}.png",
                           "clip": f"c-{s['id']}.mp4" if video else None, "error": None})
     plan = R.edit_plan(sb, shots, Path("/m"))
-    talk = [x for x in plan["scenes"] if x.get("talk")]
-    assert len(talk) == sum(1 for s in shots if s["kind"] == "talk")
-    clips = [c for x in plan["scenes"] for c in x["clips"]]
-    stills = [c for x in plan["scenes"] for c in x["stills"]]
-    assert len(clips) == len(set(clips)) == sum(1 for s in shots if s["clip"])
-    assert len(stills) == len(set(stills)) == sum(1 for s in shots if s["kind"] in ("still", "insert"))
-    assert plan["title_after_scene"] is not None   # the title lands after the cold open
+    assert [x["storyboard_scene"] for x in plan["scenes"]] == [sc["id"] for sc in sb["scenes"]]
+    for sc, x in zip(sb["scenes"], plan["scenes"]):
+        assert [i["kind"] for i in x["shots"]] == [{"insert": "still"}.get(s["kind"], s["kind"]) for s in sc["shots"]]
+    paths = [i.get("clip") or i.get("path") for x in plan["scenes"] for i in x["shots"]]
+    assert len(paths) == len(set(paths)) == len(shots)
+    assert plan["countdown"] and plan["countdown"]["label"] == sb["countdown"]
+    assert R.edit_plan(dict(sb, countdown=""), shots, Path("/m"))["countdown"] is None
 
 
 def test_retry_respects_estimate_only_and_zero_cap(tmp_path, monkeypatch):

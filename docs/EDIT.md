@@ -1,133 +1,128 @@
 # The anime-paced cut (`shot-director-cut`)
 
-`src/shot_director/edit.py` turns the generated clips and stills into a fast, captioned, scored edit.
+`src/shot_director/edit.py` turns the generated clips and stills into a captioned, scored edit.
 It uses ffmpeg only and generates nothing. `src/shot_director/audio.py` makes the sound files through
-Comfy Router. The pacing follows `docs/psyopanime-formula.md`.
+Comfy Router. The grammar follows the art-director review of 2026-11-03 (rules R1-R19, the "stutter" audit) as
+amended by the PsyopAnime cut log measured on their three most-viewed episodes.
 
 ```bash
 shot-director-cut --plan plan.json --out final.mp4 [--no-audio] [--sheet sheet.png]
+anime-news render --recut <episode>.shots.json [--out DIR]   # cut an episode again from the shots on disk, no spend
 ```
 
 From Python: `edit.assemble(plan, out_path, audio=True, base=plan_dir)`. Next to the video it writes
-`<out>.cuts.json`: duration, shot count, cuts per minute, average shot, gated segments, the `reuse` check
-(rule 14), and the full timeline.
+`<out>.cuts.json` (`edit.cut_report`): duration, shot count, cuts per minute, average shot, gated angles, the
+`reuse` check, the full timeline, every voice line as placed (`voice`: `played` against the file's `file_dur`),
+each clip's internal cuts (`src_cuts`), the headlines, the countdown and the measured loudness (`I`, `TP`).
+`packages/engine/tests/cut_metrics.py` scores a cuts.json with the review's stutter metrics (returns, A-B-A,
+time-backwards, jump cuts, hidden cuts, cuts inside a line).
 
 ## Plan
 
 ```json
-{"title": "NEON DISTRICT", "logline": "One sentence.", "fps": 24, "size": [1280, 720],
- "scenes": [{"beat": "chase", "caption": "No brakes, no turning back, full throttle.",
-             "clips": ["a.mp4", "b.mp4"], "stills": ["f.png", {"path": "s.png", "start_frame_of": "a.mp4"}],
-             "narration": "text read over this scene", "narration_audio": "narr-1.mp3",
-             "action": true}],
- "narration": [{"text": "...", "scene": -1, "path": "narr-0.mp3"}],
+{"title": "THE WEEKLY BRIEFING", "fps": 24, "size": [1280, 720],
+ "scenes": [{"beat": "setup", "storyboard_scene": "s1", "headline": "Mayor bans Mondays",
+             "narration": "text read over this scene", "narration_audio": "narr-s1.mp3", "clip_audio_gain": 0.35,
+             "shots": [{"kind": "talk", "clip": "t.mp4", "line": "Good evening. This week: Mondays."},
+                       {"kind": "action", "clip": "a.mp4"},
+                       {"kind": "still", "path": "f.png"}]}],
+ "narration": [{"text": "...", "at": 0.15, "path": "narr-0.mp3"}],
  "music": "music.mp3",
+ "countdown": {"label": "DEADLINE IN", "scene_beat": "escalation"},
  "sfx": [{"name": "whoosh.mp3", "at": null, "lead": 0.25, "gain": 0.7},
          {"name": "impact.mp3", "at": 12.5}]}
 ```
 
-Relative paths resolve against the plan's folder. Missing files are skipped. Each narration entry
-starts at its scene (`scene: -1` means the title card), or at an explicit `at`. An SFX entry with
-`"at": null` plays on every scene change (white flash). `name` and `path` both work for the file.
-A beat containing chase, fight, action, escalate, montage, battle, attack, clash or run is an action
-beat; `"action": true` marks one explicitly. A still marked `start_frame_of` a clip is that clip's first
-moment, so it is left out while the scene has a usable clip window (rule 3).
+One plan scene is one storyboard scene, and its `shots` are in storyboard order: `talk` (a take with its own
+lip-synced sound and its `line`), `action` (a clip) or `still` (`insert` is read as a still). Both pipelines write
+this (`render_storyboard.edit_plan` per storyboard scene, `showrunner.edit_plan` per act). An older plan whose scene
+is one talk take (`"talk": true`, `"line"`) or `"clips"` plus `"stills"` still loads: its clips come first, then its
+stills (that format records no order between them), and a still marked `start_frame_of` a clip is used only when
+that clip gives no window.
+
+Relative paths resolve against the plan's folder; missing files are skipped. Every clip and still is used in one
+place only. `title` is the series, drawn as the corner wordmark. `headline` (weekly segment scenes) is shown once
+as a lower-third. A free-standing `narration` entry plays at `at`, or at its `scene`, or at 0.15 s. An SFX entry
+with `"at": null` plays on every storyboard scene change and on the end card.
 
 ## Cutting rules
 
-0. **Every source moment is on screen at most once.** Each window of clip footage (clip segment, the
-   source span of a speed ramp, burst shot, CRT shot, title background) is disjoint from every other
-   window of the same file, and a window that cannot be placed without overlap is skipped. Each still is
-   used at most once in the whole cut, and no freeze frames are taken from clips.
-1. **No clip plays straight through.** Each clip's unused source is cut into as many slots of at least
-   1.45 s as fit, at most 3, spread over the clip; each window is 1.6 to 2.5 s or its slot, whichever is
-   shorter, in whole frames. A 5 s clip gives 3 windows of about 1.6 s, a 15 s clip 3 windows of 1.6 to
-   2.5 s. The window whose slot holds the clip's strongest frame moves onto it, inside its slot only.
-   No shot is longer than 2.5 s.
-2. **Average shot is 1.3 to 1.8 s.** Action beats add a burst of four 0.33 s shots (8 frames), one per
-   clip in rotation, carved only from source no other window uses (an action scene keeps a 0.38 s strip
-   of each clip free for it); a shot that does not fit is skipped. They go just before the scene's last
-   shot. The 5 s mock episode averaged 1.58 s.
-3. **Stills become cutaways** of 0.9 to 1.3 s. Each one gets a Ken Burns push-in, a pull-out, or a
-   decaying camera shake, in rotation. The order is clip, still, clip, clip, still, clip... Leftover
-   stills go before the scene's last clip shot (or after the only one, in a one-clip scene), and a scene
-   with no usable clips becomes a montage of its stills. Stills that are the start frames of the scene's
-   clips are not used while the scene has a usable clip window; they are the fallback when clips fail.
-4. **Cold open:** the title and logline sit over the sharpest frame of the whole episode, with a crash
-   zoom, for 1.25 s. That 1.25 s window is reserved before any scene is planned, so no scene shows it again.
-5. **Every scene opens on its strongest shot**: the sharpest window that passes the sharpness gate
-   (rule 9), with a quick push-in.
-6. **Hard cuts dominate.** A 2-frame white flash marks every scene change. A 1-frame black marks the
-   hard beats: before the speed ramp and before the scene's last shot.
-7. **One speed ramp per scene**, on the second clip segment: `setpts` 1.4 (slow motion) on even scenes,
-   0.7 (sped up) on odd ones. The ramp keeps the window's start; a speed-up that would run past the
-   clip's end shortens the shot (and is skipped below 0.6 s) rather than reaching back into frames the
-   gate never checked.
-8. **CRT-monitor shot** (0.5 to 0.8 s) as the transition into every other scene: one of the scene's own
-   planned windows (never the opener, the ramp or the closing shot) is shortened, moved to the front and
-   shown inside a dark bezel with scanlines, barrel curvature (`lenscorrection`), a blue tint and grain.
-   It adds no repeated footage. A scene with fewer than 3 windows gets no CRT shot.
-9. **Sharpness gate.** For every candidate segment, the first, middle and last frames are sampled
-   (160x90 grayscale through ffmpeg) and the Laplacian variance is computed in pure Python, so neither
-   numpy nor OpenCV is needed. The segment's score is its worst frame. A segment scoring below 40 % of
-   the clip's median sharpness (10 samples) is dropped and listed in `gated_segments`. The gate applies
-   to every window, the scene opener included, and burst shots go through it too. If no window in a
-   scene passes, the sharpest one is kept as the opener and a warning is logged. The CRT shot is one of
-   the scene's gate-passing windows. The gate is relative to each clip's median, so a clip that is mostly blurred
-   has a blurred median and gates little. The scene's last shot is the
-   segment with the sharpest final frame, so a smeared whip-pan tail never ends a scene. In the test,
-   the motion-blurred tail of `media/sequence-fe2c7f01.mp4` (13.0 to 14.5 s, sharpness 390 to 780
-   against a median of 4197) was gated out.
-10. **Subtitles** use the brand yellow #F5C518 on a dark translucent box, bottom-center, one clause at
-    a time. The scene caption is split on commas, semicolons, colons, sentence ends and dashes, with at
-    most 8 words per chunk, and the clauses are spread in order across the scene's cuts.
-11. **Wordmark:** "ANIME NEWS", small and gold, top-left, after the 28 px gold cube mark
-    (`static/brand/an-mark-small.png`, overlaid with ffmpeg), on every frame except the flash and
-    black frames. Override the text with `SHOT_DIRECTOR_WORDMARK` and the mark with
-    `SHOT_DIRECTOR_WORDMARK_MARK`; an empty value or a missing file drops the mark and the cut still renders.
-12. **End card:** "ANIME NEWS · open source · #OpenSourceHiggsfield" with a gold rule.
-13. Output is 1280x720 at 24 fps unless the plan's `size`/`fps` say otherwise. Video is H.264 (yuv420p),
-    audio is AAC 48 kHz stereo, with `+faststart`.
-14. **Reuse check.** `<out>.cuts.json` carries `reuse`: `overlapping_windows` (pairs of footage windows of
-    one file overlapping by more than one frame), `still_repeats`, `unique_sources` (clips plus stills on
-    screen) and `source_seconds_used` (clip footage seconds). It is recounted from the final timeline,
-    not taken from the planner, and both counts must be 0.
+0. **Every source moment is on screen at most once.** Each clip angle is shown once, each still once, and no freeze
+   frames are taken from clips. `cuts.json` `reuse` recounts it from the final timeline: `overlapping_windows` and
+   `still_repeats` must be 0.
+1. **A clip is cut by its angles, never across one (R4).** Seedance action clips carry a hidden "Hard cut to:"
+   second angle. Each clip is decoded once at 160x90; a frame whose ffmpeg scene score is over 0.25, or a spike of at
+   least 0.20 that is 1.6x the frame before it, is an internal cut (the first and last 0.2 s are ignored, changes
+   within 0.3 s are one cut zone). An angle is the span between cuts, at least 12 frames, minus one frame of margin
+   each side. Each angle gives one window, and a window never contains a cut.
+2. **A scene plays forward, in storyboard order (R1-R3, R5).** Shots appear in the order the storyboard gives them;
+   a clip's angles appear in source order, each once, so a scene never returns to a clip it left, never runs
+   backwards in source time and never jump-cuts within one shot. In an action run (consecutive action shots), the
+   scene's opening shot establishes (1.5 s), the shots after it are short (0.8 s; PsyopAnime action shots run 0.6-1.0
+   s) and the run's last shot holds (up to 2 s) to reset the beat. Three or more consecutive short shots of distinct
+   compositions from at least two clips are a burst; one clip is never rotated into a burst.
+3. **Stills hold in their storyboard place** for 1.9 s (PsyopAnime stills average 1.9 s) with one camera move: a
+   Ken Burns push, pull or decaying shake, in rotation. A scene whose clips all fail the gate plays its stills.
+4. **No opening title card.** The cut opens cold on the first scene; the series wordmark is in the corner from the
+   first frame. The end card ("ANIME NEWS · open source · #OpenSourceHiggsfield", a gold rule) holds 2.5 s.
+5. **Each window opens where the action is (R6).** Within an angle, a window starts at the earliest start that
+   passes the sharpness gate (rule 9), or within the next 0.5 s at the start with the most motion (mean frame
+   difference over its first 12 frames). A smeared tail shortens the window (never below 0.5 s) instead of moving it.
+6. **Hard cuts only.** No white flashes, black frames, speed ramps, CRT inserts, punch-ins or dissolves: the movement
+   comes from inside the clips (PsyopAnime cut log). The whoosh and impact SFX hit on storyboard scene changes.
+7. **Talk takes hold (R11, R12).** A take is one framing, nearly whole (0.15 s to its end minus 0.1 s), never
+   punched into after the fact. A take over 4 s holds 2-3.7 s on the speaker and lends the rest of its line to the
+   scene's next pictures (L-cut), or, when it ends the scene, opens its line under the previous pictures (J-cut).
+   The cut falls on a clause boundary, placed by word count and snapped to the nearest real pause in the take's
+   sound within 0.5 s (ffmpeg silencedetect, -32 dB for 0.12 s). A J-cut's voice starts on a cut of the previous run,
+   and no cut falls in a line's first 0.8 s. The take's sound always plays whole.
+8. **Lines are never cut off (R13).** A scene's narration plays in full over its first run of pictures; the run
+   grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s.
+   A narration that still does not fit is logged, and `voice` shows `played` shorter than `file_dur`.
+9. **Sharpness gate.** For every candidate window, the first, middle and last frames are scored (Laplacian
+   variance of the 160x90 grayscale frame, pure Python). A window must reach 40 % of its angle's median (10
+   samples; each angle is its own shot, so a soft close-up is not judged against a sharp wide) and never less than
+   `SHARP_FLOOR` (250). An angle with no passing window is dropped and listed in `gated_segments`; a scene with nothing
+   left is skipped, and its narration is dropped with it.
+10. **Subtitles follow the voice, not the cuts.** Yellow #F5C518 on a dark translucent band, bottom centre, one
+    clause at a time (split on commas, semicolons, colons, sentence ends and dashes, at most 8 words per chunk).
+    Each clause of a spoken line (dialogue or narration) is on screen for its word-count share of the line as it
+    plays, across whatever cuts it spans. Wordless pictures carry no subtitle, so storyboard captions over action are
+    not drawn.
+11. **Headline lower-third.** A scene with a `headline` shows it once, in the subtitle style, for 2.5 s on its first
+    run of pictures (at the scene's start, or right after an opening talk take). No voice plays under it: that run
+    lends no time to a talk take, and the scene's narration starts on the next cut after it (or once it is off).
+12. **Countdown** (only when the plan has `countdown`; `render_storyboard` sets it only when the storyboard names a
+    label): a big red (#FF2A2A) monospace `00:SS` top-right, its label above, over the last run of pictures of the
+    first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. No subtitle under
+    it states a time (R18).
+13. **Wordmark:** the plan's `title` (the series), small and gold, top-left, after the 28 px gold cube mark
+    (`static/brand/an-mark-small.png`, overlaid with ffmpeg), on every frame. `SHOT_DIRECTOR_WORDMARK` overrides the
+    text (empty = none), `SHOT_DIRECTOR_WORDMARK_MARK` the mark; a missing mark file is skipped.
+14. Output is 1280x720 at 24 fps unless the plan's `size`/`fps` say otherwise. Video is H.264 (yuv420p), audio is
+    AAC 48 kHz stereo, with `+faststart`.
 
-The resulting pace is about 40 to 45 shots per minute. That is faster than the 20 to 35 cuts per minute
-in the first brief; the research's 1.3 to 1.8 s average shot overrides it.
-
-## Talking-cast plan fields (episode v2, `showrunner.edit_plan`)
-
-- **`"talk": true`** scene (one clip, `"line"`, `"speaker"`): the take is shown nearly whole, from 0.15 s to
-  its end minus 0.1 s, as 2 or 3 windows of 1.6 to 3.0 s that abut exactly in source time. Cuts fall on a
-  clause boundary of the line (by word count) when one is within 0.6 s of the even split. Framing
-  alternates wide, punch-in (1.3x, centred, upper third), wide. The clauses are captioned for their
-  word-count share of the take, across the cuts. No speed ramp, burst, CRT, black frame or still; the white
-  flash before the scene stays. Talk takes are never used for the title background.
-- **`"clip_audio_gain"`** (action scenes, default 0): each shown window's own sound, same source span as the
-  picture (speed ramps time-stretched), on the SFX bus at that gain. Clips without audio are skipped.
-- **`"music_intro"`**: a riser from 0; the bed comes in on the title card (the drop) with a 0.15 s crossfade.
-  If the riser is shorter than the cold open, the bed starts where the riser ends, so there is never a gap.
-- **`"title_after_scene"`**: the title card goes right after that scene (cold open first). Every SFX entry
-  with `"at": null` also hits the title.
-- **`"countdown": {"label", "scene_beat"}`**: the first non-talk scene with that beat gets a big red
-  (#FF2A2A) monospace countdown top-right, the label above, `00:SS` running down to `00:00` over the
-  scene; the last second flashes white. `cuts.json` notes it under `countdown`, and the title time under `title_at`.
+The pace that results depends on what was generated: on the four reviewed episodes, 15-30 cuts per minute, median
+shot 1.4-3.0 s, every return, A-B-A, time-backwards, jump cut and hidden cut at 0 (PsyopAnime: 27-50 cuts per
+minute, median 1.4 s). More angles per action clip (more "Hard cut to:" beats) is what raises it.
 
 ## Audio
 
 Each bus is rendered to its own WAV stem with a length check, then the stems are mixed. One graph with
 every input in it ended the mix early (loudnorm inside a multi-input graph truncated the bus).
 
-- **Voice bus:** narration lines plus the dialogue (each talk take's own sound for exactly the source span
-  on screen). Each line is loudnorm'd to -16 LUFS on its own, then delayed to its place.
-- **Music bus:** the bed (volume 0.8), looped to the end with no gaps, optional intro riser, ducked under
-  the voice bus only (never under SFX) with `sidechaincompress` (threshold 0.03, ratio 10, attack 20 ms,
-  release 400 ms).
-- **SFX bus:** hits on the scene changes (whoosh leading by 0.25 s, impact on the flash) and the action
-  clips' own sound.
-- **Final:** mixed, then `loudnorm` I=-14 TP=-1.0 LRA=11 (single-pass; the mock v2 cut measured -13.5 LUFS).
-  With nothing provided, or with `--no-audio`, a silent stereo AAC track is still written so players behave.
+- **Voice bus:** every line where the planner placed it: narration in full, and each talk take's own sound for its
+  whole line, also where its picture has cut away. Each line is loudnorm'd to -16 LUFS on its own, then delayed
+  to its place.
+- **Music bus:** the bed (volume 0.8), looped to the end with no gaps; quiet (0.35 of that) through the first
+  scene, then building in a straight line to full at two thirds of the cut (PsyopAnime: a quiet open, the loudest
+  part in the last third); ducked under the voice bus only (never under SFX) with `sidechaincompress` (threshold
+  0.03, ratio 10, attack 20 ms, release 400 ms).
+- **SFX bus:** hits on storyboard scene changes and the end card (whoosh leading by 0.25 s, impact on the cut),
+  never at 0:00, and the action clips' own sound at `clip_audio_gain`.
+- **Final:** mixed, `loudnorm` I=-14 TP=-1.5 LRA=11, then the delivered file is measured (ebur128); while its true
+  peak is over -1.0 dBTP (the AAC encode overshoots), the audio is turned down by the excess. With nothing provided,
+  or with `--no-audio`, a silent stereo AAC track is still written so players behave.
 
 ## Sound generation (`audio.py`, Comfy Router)
 
@@ -146,8 +141,3 @@ model's `openapi.json` documents. If it ever answers with a queued `request_id`,
 logs one warning and returns None, so the cut still renders. Results are cached by output path, so
 re-running does not spend credits again. The default voice is `21m00Tcm4TlvDq8ikWAM`, from the Router
 openapi example; `SHOT_DIRECTOR_VOICE` overrides it.
-
-
-**Gate exception (explicit):** a scene whose clip windows all fail the sharpness gate opens on its stills and the smeared clip is dropped. A scene with no stills whose windows all fail is skipped entirely (logged); in the episode pipeline every scene carries its start frame as a still, so this only drops scenes in hand-built plans. The gate is absolute: no smeared opener ever ships.
-
-**Absolute floor:** a window must also exceed `SHARP_FLOOR` (Laplacian variance 250) regardless of its clip's median, so a mostly-smeared clip cannot pass its own low bar. Narration belonging to a skipped scene is dropped.

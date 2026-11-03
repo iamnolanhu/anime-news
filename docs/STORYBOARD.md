@@ -37,7 +37,7 @@ storyboard is checked by the same rules as the writer's reply.
 | `cast[]` | `id` (slug), `name`, `role`, `look` (drawn-anime description, used in every frame prompt the member is in), `voice` (an ElevenLabs voice id used as Seedance's voice reference; anything else falls back to a default voice). Optional: `trait` (personality, given to the writer), `poses` (see "The cast file"). Missing or empty: the default cast (`<media>/cast.json` when present, else KUROGANE, VEX, DR. HAKASE). Original characters only, never a real person. |
 | `scenes[].act` | `cold_open`, `setup`, `escalation`, `turn`, `climax`, `sign_off`. A cold open has no caption and no narration. |
 | `scenes[].setting` | where the scene happens; added to every frame prompt of the scene |
-| `scenes[].caption` | the subtitle of the scene's non-talk cuts (60 chars max) |
+| `scenes[].caption` | the scene's one-line summary (60 chars max); the cut draws no caption over wordless pictures (subtitles are what is spoken), so it is not shown on screen; a weekly segment's headline is, as a lower-third |
 | `scenes[].narration` | 1-2 sentences (30 words max) read by the narrator over the scene's first non-talk run; empty = none |
 | `shots[].kind` | `talk` (a cast member speaks `line` on camera: Seedance 2.5 with the member's voice), `action` (animated clip on the action engine, Seedance by default), `still` (one frame, used as a quick Ken Burns cut-in), `insert` (one frame of a prop, screen, ticker or document; the headline text may appear) |
 | `shots[].cast` | cast ids in the shot; a talk shot's first id is the speaker (default: the first cast member) |
@@ -47,8 +47,8 @@ storyboard is checked by the same rules as the writer's reply.
 | `shots[].seconds` | talk 4-10 (default from the line length), action 4-10 (default 5); stills ignore it |
 | `id`s | optional on input; missing or duplicate ids are regenerated |
 
-Extra optional fields: `title_card` (the 9:16 export's title and the cut's title card), `countdown` (label of the red
-countdown on the escalation scene; default `NEXT BRIEFING IN`), `style` (extra visual direction), `writer` (which model wrote it).
+Extra optional fields: `title_card` (the 9:16 export's title; the 16:9 cut has no title card), `countdown` (label of the
+red countdown on the escalation scene; the cut draws a countdown only when this is set), `style` (extra visual direction), `writer` (which model wrote it).
 Weekly episodes add `week` (`2026-W44`), `segments` (`[{topic, headline, source_text}]`) and a scene-level `topic`
 (`ai`, `crypto`, `politics`, `tech`, `markets`, or `markets_10s` for the markets insert); see [WEEKLY.md](WEEKLY.md).
 
@@ -122,7 +122,8 @@ token rate (about $0.149 per second at 480p, 2.25x at 720p); the image, voice an
 
 ## Shot order and the cut
 
-The order of talk shots, and of the groups of non-talk shots between them, is kept exactly as written. Inside one group of
-consecutive action / still / insert shots the anime cut decides the order itself (the sharpest gate-passing window opens, the rest
-alternate clip / still / clip for variety; see docs/EDIT.md). Reordering shots inside such a group changes which shot leads the
-group only when it is the sharpest; to force a shot to lead a beat, put a talk shot before it.
+The cut keeps every shot in the order written: a scene is cut as one piece, talk, action, stills and inserts in
+storyboard order, and an action clip's angles (the "Hard cut to:" beats inside a Seedance clip) in their own order,
+each once. The editor trims and chooses windows; it never reorders. A talk take may lend part of its line to the shots
+right after it (or before it, when it ends the scene), so put the pictures that illustrate a line next to it. See
+docs/EDIT.md.

@@ -243,47 +243,44 @@ def usable(r: dict) -> bool:
 # -- the cut --------------------------------------------------------------------------------------
 
 def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None = None) -> dict:
-    """edit.assemble scenes: each talk shot is its own scene (one take, its own sound); the other shots of a
-    storyboard scene between talk shots form one fast-cut scene of clips (action) and stills (still/insert).
-    The scene's narration rides on its first non-talk edit scene."""
+    """edit.assemble scenes: one per storyboard scene, its rendered shots in storyboard order (talk takes with their
+    own sound, action clips, stills and inserts as stills), with the scene's narration, which edit.py plays in full
+    over the scene's first run of pictures. Subtitles come from what is spoken; a weekly segment's headline is its
+    one lower-third; the countdown is drawn only when the storyboard names one."""
     from . import music
     kit = music.music_kit(media)
     narration = narration or {}
     by_id = {r["id"]: r for r in shots}
+    headlines = {seg["topic"]: seg["headline"] for seg in sb.get("segments") or []}
     scenes: list[dict] = []
     for sc in sb["scenes"]:
-        narrated = False
+        items = []
         for s in sc["shots"]:
             r = by_id.get(s["id"])
             if not r or not usable(r):
                 continue
             if r["kind"] == "talk":
-                scenes.append({"beat": sc["act"], "talk": True, "line": r["line"], "caption": r["line"],
-                               "speaker": (r["cast"] or [""])[0], "clips": [str(media / r["clip"])], "stills": [],
-                               "storyboard_scene": sc["id"]})
-                continue
-            cur = scenes[-1] if scenes else None
-            if not cur or cur.get("talk") or cur.get("storyboard_scene") != sc["id"]:
-                cur = {"beat": sc["act"], "action": sc["act"] not in ("sign_off",), "clips": [], "stills": [],
-                       "caption": sc.get("caption") or "", "storyboard_scene": sc["id"]}
-                if not narrated and sc.get("narration"):
-                    cur["narration"] = sc["narration"]
-                    if narration.get(sc["id"]):
-                        cur["narration_audio"] = narration[sc["id"]]
-                    narrated = True
-                scenes.append(cur)
-            if r["kind"] == "action":
-                cur["clips"].append(str(media / r["clip"]))
+                items.append({"kind": "talk", "clip": str(media / r["clip"]), "line": r["line"],
+                              "speaker": (r["cast"] or [""])[0]})
+            elif r["kind"] == "action":
+                items.append({"kind": "action", "clip": str(media / r["clip"])})
             else:
-                cur["stills"].append(str(media / r["frame"]))
+                items.append({"kind": "still", "path": str(media / r["frame"])})
+        if not items:
+            continue
+        scene = {"beat": sc["act"], "storyboard_scene": sc["id"], "shots": items}
+        if sc.get("topic") in headlines:   # a weekly segment: its headline is shown once, as a lower-third
+            scene["headline"] = headlines[sc["topic"]]
+        if sc.get("narration"):
+            scene["narration"] = sc["narration"]
+            if narration.get(sc["id"]):
+                scene["narration_audio"] = narration[sc["id"]]
+        scenes.append(scene)
     acts = [s["beat"] for s in scenes]
-    cold = max((i for i, a in enumerate(acts) if a == "cold_open"), default=None)
     cd_beat = next((a for a in ("escalation", "climax", "turn", "setup") if a in acts), None)
-    plan = {"title": sb.get("series") or storyboard.SERIES, "logline": sb.get("title_card") or sb["headline"][:30].upper(),
-            "fps": 24, "size": [1280, 720], "scenes": scenes, "narration": [],
-            "music": kit.get("bed"), "music_intro": kit.get("intro"), "sfx": [],
-            "title_after_scene": cold,
-            "countdown": {"label": sb.get("countdown") or storyboard.COUNTDOWN, "scene_beat": cd_beat} if cd_beat else None}
+    plan = {"title": sb.get("series") or storyboard.SERIES, "fps": 24, "size": [1280, 720], "scenes": scenes,
+            "narration": [], "music": kit.get("bed"), "sfx": [],
+            "countdown": {"label": sb["countdown"], "scene_beat": cd_beat} if cd_beat and sb.get("countdown") else None}
     if kit.get("whoosh"):
         plan["sfx"].append({"path": kit["whoosh"], "at": None, "lead": 0.25, "gain": 0.6})
     if kit.get("impact"):
@@ -410,6 +407,43 @@ def render(sb: dict, router, media: Path, quality: str = DEFAULT_QUALITY, vertic
     fields["path"] = str(media / cutres["file"])
     episode._update_ledger(media, entry_id, fields)
     return {"id": entry_id, **fields}
+
+
+def recut(media: Path, shots_file: Path, vertical: bool = False) -> dict:
+    """Cut an episode again from the shots already on disk: no generation, no Router call. Reads <epid>.shots.json
+    (either pipeline: a storyboard render or showrunner's script), rebuilds <epid>.plan.json with the current
+    edit plan, uses the scene narration files already in the media dir (<epid>-narration-<scene>.mp3), and writes
+    <epid>.mp4 (+ .cuts.json, and the 9:16 export with `vertical`). Updates the episode's ledger entry if any."""
+    from . import edit
+    media, shots_file = Path(media).resolve(), Path(shots_file).resolve()
+    doc = json.loads(shots_file.read_text())
+    epid = doc.get("episode_id") or shots_file.name.removesuffix(".shots.json")
+    if "script" in doc:
+        plan, title_card = showrunner.edit_plan(doc["script"], doc["shots"], media), doc["script"].get("title_card")
+    else:
+        sb = doc["storyboard"]
+        narr = {sc["id"]: str(media / f"{epid}-narration-{sc['id']}.mp3") for sc in sb["scenes"]
+                if (media / f"{epid}-narration-{sc['id']}.mp3").exists()}
+        plan, title_card = edit_plan(sb, doc["shots"], media, narr), sb.get("title_card") or sb["headline"][:40].upper()
+    if not plan["scenes"]:
+        raise RuntimeError("nothing to cut: no usable shot on disk")
+    (media / f"{epid}.plan.json").write_text(json.dumps(plan, indent=1))
+    out = media / f"{epid}.mp4"
+    edit.assemble(plan, out, audio=True, base=media)
+    rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+    report = {k: rep.get(k) for k in ("duration", "shots", "cuts_per_minute", "avg_shot_s", "audio", "reuse")}
+    vfile = None
+    if vertical:
+        from .vertical import vertical as to_vertical
+        to_vertical(out, media / f"{epid}.9x16.mp4", title_card)
+        vfile = f"{epid}.9x16.mp4"
+    entry = next((e for e in episode.read_ledger(media) if e.get("episode_id") == epid or e.get("file") == out.name), None)
+    if entry and entry.get("id"):
+        episode._update_ledger(media, entry["id"], {"cut": report, "duration": report["duration"],
+                                                    "cut_shots": report["shots"],
+                                                    "cuts_per_minute": report["cuts_per_minute"],
+                                                    "reuse": report["reuse"], "recut": episode._now()})
+    return {"episode_id": epid, "file": out.name, "path": str(out), "vertical_file": vfile, "report": report}
 
 
 def retry_estimate(sb: dict, shots: list[dict], quality: str, media: Path) -> dict:

@@ -4,6 +4,7 @@
   anime-news storyboard "<headline>" [--text T | --url U] [--minutes 1] [--mock]     prints the storyboard JSON
   anime-news render <storyboard.json> [--quality 480p|720p] [--vertical] [--out DIR] [--mock]
   anime-news render --retry <episode>.shots.json [--out DIR]                        re-renders failed shots only
+  anime-news render --recut <episode>.shots.json [--out DIR]                        re-cuts the shots on disk, no spend
   anime-news make "<headline>" [--text T | --url U] [--minutes 1] [--quality 480p] [--vertical] [--out DIR] [--mock]
   anime-news weekly --week 2026-W44 | --weeks 2026-W01..2026-W44 [--minutes 1] [--quality 480p] [--out DIR] [--mock]
                     [--plan-only] [--retry] [--budget-usd 100] [--publish]                THE WEEKLY BRIEFING (docs/WEEKLY.md)
@@ -93,6 +94,16 @@ def cmd_render(args) -> None:
     _mock(args)
     media = _media(args)
     media.mkdir(parents=True, exist_ok=True)
+    if args.recut:
+        from . import render_storyboard as rs
+        try:
+            res = rs.recut(media, Path(args.recut), args.vertical)
+        except Exception as e:  # noqa: BLE001
+            print(f"recut failed: {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(res["path"])
+        print(json.dumps(res["report"], indent=1))
+        return
     if args.retry:
         from . import render_storyboard as rs
         from .router_client import make_router
@@ -109,7 +120,7 @@ def cmd_render(args) -> None:
         _print_episode(entry, media)
         return
     if not args.storyboard:
-        print("render needs a storyboard.json (or --retry <episode>.shots.json)", file=sys.stderr)
+        print("render needs a storyboard.json (or --retry / --recut <episode>.shots.json)", file=sys.stderr)
         sys.exit(2)
     _render(args, json.loads(Path(args.storyboard).read_text()), media)
 
@@ -194,6 +205,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("render", help="render a storyboard JSON into an episode")
     p.add_argument("storyboard", nargs="?")
     p.add_argument("--retry", help="re-render only the failed shots of an <episode>.shots.json, then re-cut")
+    p.add_argument("--recut", help="cut an <episode>.shots.json again from the shots on disk; generates nothing")
     _render_opts(p)
     p.set_defaults(fn=cmd_render)
     p = sub.add_parser("make", help="storyboard + render in one go")

@@ -48,7 +48,7 @@ The pipeline, one episode:
 
 ## Engine API
 
-The engine listens on `http://127.0.0.1:8765`. CORS allows the site's origin (`ANIME_NEWS_ALLOWED_ORIGINS`, comma list; default `https://anime-news.vercel.app,https://*.vercel.app,http://localhost:3000,http://127.0.0.1:3000`) and answers Chrome's private-network preflight.
+The engine listens on `http://127.0.0.1:8765`. CORS allows the site's origin (`ANIME_NEWS_ALLOWED_ORIGINS`, comma list; default `https://anime-news-nine.vercel.app,http://localhost:3000,http://127.0.0.1:3000`) and answers Chrome's private-network preflight.
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |

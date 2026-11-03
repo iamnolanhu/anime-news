@@ -12,9 +12,16 @@ dependencies = [
 ]
 
 [project.scripts]
+anime-news = "shot_director.cli:main"
 shot-director = "shot_director.app:main"
 shot-director-episode = "shot_director.episode:main"
 shot-director-cut = "shot_director.edit:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]

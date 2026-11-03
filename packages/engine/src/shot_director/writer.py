@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from . import presets
-from .router_client import BASE_URL, load_api_key
+from .router_client import BASE_URL, CREDITS, load_api_key
 
 ROOT = Path(__file__).resolve().parents[2]
 CHAT_MODEL = os.environ.get("SHOT_DIRECTOR_CHAT_MODEL", "anthropic/claude-sonnet-5-5")
@@ -165,17 +165,19 @@ def validate(script: object, scenes: int, clips_per_scene: list[int]) -> dict:
             "scenes": out_scenes, "sign_off": " ".join(str(script["sign_off"]).split())}
 
 
-def _chat(system: str, user: str, model: str = CHAT_MODEL) -> str:
+def _chat(system: str, user: str, model: str = CHAT_MODEL, max_tokens: int = MAX_TOKENS,
+          timeout: float = TIMEOUT_SECONDS) -> str:
     """One synchronous Messages call on Router (POST /v2/models/{model}). Returns the text reply."""
     key = load_api_key()
     if not key:
         raise RuntimeError("no COMFY_API_KEY (mock mode)")
-    body = {"max_tokens": MAX_TOKENS, "system": system, "messages": [{"role": "user", "content": user}]}
+    body = {"max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user}]}
     req = urllib.request.Request(
         f"{BASE_URL}/v2/models/{model}", data=json.dumps(body).encode(), method="POST",
         headers={"X-API-Key": key, "Content-Type": "application/json", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            CREDITS.record(r.headers)
             doc = json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Router HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e

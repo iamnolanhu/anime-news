@@ -3,46 +3,52 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Anime News</title>
+<title>Anime News: local engine</title>
 <style>
-  /* base layout; fallback palette = Anime News gold, used only if theme.css fails to load */
-  :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; }
+  :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; --err:#ff6b6b; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
-  header { display:flex; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
   header h1 { margin:0; font-size:20px; letter-spacing:.5px; }
   .badge { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
   .badge.mock { color:#ffd27a; border-color:#6b5420; }
   .badge.live { color:#7ee2a8; border-color:#1f6b42; }
-  main { display:grid; grid-template-columns: 380px 1fr; gap:18px; padding:18px 22px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  main { max-width:1100px; margin:0 auto; padding:18px 22px 60px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:16px; }
   h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
   label { display:block; font-size:13px; color:var(--dim); margin:8px 0 4px; }
-  select, input[type=text], textarea { width:100%; background:#0d1017; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
-  textarea { resize:vertical; min-height:56px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  .chip { border:1px solid var(--line); border-radius:8px; padding:7px 8px; cursor:pointer; font-size:13px; background:#0d1017; color:var(--text); text-align:left; }
-  .chip.on { border-color:var(--accent); color:var(--accent); }
-  button.primary { width:100%; margin-top:12px; padding:11px; border:0; border-radius:9px; background:var(--accent); color:#1a1205; font-weight:700; cursor:pointer; font-size:15px; }
-  button.ghost { padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--text); cursor:pointer; }
+  select, input[type=text], input[type=password], input[type=number], textarea { width:100%; background:#000; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
+  textarea { resize:vertical; min-height:60px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+  .row > * { flex:1 1 160px; }
+  .row > .tight { flex:0 0 auto; }
+  button { font:inherit; }
+  button.primary { padding:10px 16px; border:0; border-radius:9px; background:var(--accent); color:#000; font-weight:700; cursor:pointer; }
+  button.ghost { padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--text); cursor:pointer; }
+  button.danger { color:var(--err); }
   button:disabled { opacity:.5; cursor:wait; }
-  .frame img { width:100%; border-radius:8px; margin-top:8px; display:block; }
-  .fragment { font-size:12px; color:var(--dim); margin-top:6px; min-height:2.6em; }
-  .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; }
-  .slot { border:1px dashed var(--line); border-radius:10px; min-height:150px; display:flex; flex-direction:column; justify-content:center; align-items:center; color:var(--dim); padding:6px; }
-  .slot video { width:100%; border-radius:8px; }
-  .slot .meta { font-size:12px; margin-top:4px; text-align:center; }
-  #sequence video { width:100%; max-height:52vh; border-radius:10px; background:#000; }
-  .row { display:flex; gap:8px; align-items:center; margin-top:10px; }
+  .hint { font-size:12px; color:var(--dim); }
   #status { font-size:13px; color:var(--dim); min-height:1.4em; }
-  #status.err { color:#ff8a8a; }
+  #status.err { color:var(--err); }
+  .scene { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:12px 0; }
+  .scene-head { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .scene-head strong { color:var(--accent); }
+  .shots { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:10px; margin-top:10px; }
+  .shot { border:1px solid var(--line); border-radius:8px; padding:8px; background:#000; }
+  .shot.talk { border-color:rgba(245,197,24,.45); }
+  .shot .tools { display:flex; gap:4px; justify-content:flex-end; margin-top:6px; }
+  .shot textarea { min-height:70px; font-size:13px; }
+  .progress { height:10px; background:#000; border:1px solid var(--line); border-radius:99px; overflow:hidden; margin-top:8px; }
+  .progress > div { height:100%; width:0; background:var(--accent); transition:width .4s; }
+  video { width:100%; max-height:60vh; background:#000; border-radius:10px; margin-top:10px; }
+  .eps { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px; }
+  .ep video { margin-top:0; }
+  .ep .meta { font-size:12px; color:var(--dim); }
   a { color:var(--accent); }
 </style>
 <link rel="stylesheet" href="/static/theme.css">
 <link rel="stylesheet" href="/static/public.css">
-<link rel="stylesheet" href="/static/storyboard.css">
 <script src="/static/access.js"></script>
-<script src="/static/storyboard.js"></script>
 <script src="/static/vendor/anime.min.js" defer></script>
 <script src="/static/theme.js" defer></script>
 </head>
@@ -51,183 +57,61 @@
 <header>
   <a class="an-lockup" href="/" aria-label="Anime News home"><span class="an-mark-wrap"><svg xmlns="http://www.w3.org/2000/svg" class="an-mark" viewBox="110 110 1280 1280" aria-hidden="true" focusable="false"><defs><path id="an-face-left" pathLength="1" d="M232 574 L545 390 L863 572 L557 754 L557 1136 L232 951"/><path id="an-face-top" pathLength="1" d="M614 347 L921 165 L1252 352 L1253 1082 L934 887 L933 527 Z"/><path id="an-face-base" pathLength="1" d="M617 792 L1238 1159 L923 1346 L617 1173 Z"/><linearGradient id="an-gold" gradientUnits="userSpaceOnUse" x1="0" y1="165" x2="0" y2="1346"><stop offset="0" stop-color="#FFE566"/><stop offset=".45" stop-color="#F5C518"/><stop offset="1" stop-color="#C99700"/></linearGradient><pattern id="an-scan" patternUnits="userSpaceOnUse" width="24" height="24"><rect width="24" height="8" fill="#F5C518"/></pattern><filter id="an-blur" x="-25%" y="-25%" width="150%" height="150%"><feGaussianBlur stdDeviation="22"/></filter></defs><g class="an-scanfill" fill="url(#an-scan)" stroke="none" opacity=".16"><use href="#an-face-left"/><use href="#an-face-top"/><use href="#an-face-base"/></g><g class="an-glow" fill="none" stroke="#FFE566" stroke-width="52" stroke-linejoin="miter" filter="url(#an-blur)" opacity=".55"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g><g class="an-chroma" fill="none" stroke-width="26" stroke-linejoin="miter" opacity=".25"><g transform="translate(-10 0)" stroke="#19E6FF"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g><g transform="translate(10 0)" stroke="#FF2BD6"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g></g><g class="an-stroke" fill="none" stroke="url(#an-gold)" stroke-width="26" stroke-linejoin="miter"><use class="an-draw" href="#an-face-left"/><use class="an-draw" href="#an-face-top"/><use class="an-draw" href="#an-face-base"/></g></svg></span><h1 class="wordmark">Anime News</h1></a>
   <span id="mode" class="badge">...</span>
-  <span class="badge" id="models"></span>
   <a class="nav-link" href="/episodes">Episodes</a>
   <span id="access" class="badge access" hidden></span>
   <span style="flex:1"></span>
-  <span id="status"></span>
+  <span id="status" role="status"></span>
 </header>
-<div id="ticker" class="ticker" role="marquee" aria-label="Headlines" hidden></div>
 <main>
-  <div>
-    <section class="frame">
-      <h2>1. Start frame</h2>
-      <input type="file" id="file" accept="image/png,image/jpeg,image/webp">
-      <label>or generate one with FLUX 3</label>
-      <div class="row" style="margin-top:0">
-        <input type="text" id="framePrompt" placeholder="a lone astronaut on a neon rooftop at night">
-        <button class="ghost" id="genFrame">Generate</button>
-      </div>
-      <img id="framePreview" alt="" hidden>
-    </section>
-    <section>
-      <h2>2. Camera body</h2>
-      <div class="grid" id="bodies"></div>
-      <div class="fragment" id="bodyFrag"></div>
-    </section>
-    <section>
-      <h2>3. Camera move</h2>
-      <div class="grid" id="moves"></div>
-      <div class="fragment" id="moveFrag"></div>
-      <label for="scene">Scene (optional)</label>
-      <textarea id="scene" placeholder="the astronaut turns toward the city lights"></textarea>
-    </section>
-    <section>
-      <h2>4. Engine (per shot)</h2>
-      <div class="grid" id="engines"></div>
-      <div class="fragment" id="engineFrag"></div>
-      <button class="primary" id="shoot">Generate shot</button>
-    </section>
-  </div>
-  <div>
-    <section id="storyboardPanel">
-      <h2>Storyboard</h2>
-      <div id="storyboard"></div>
-    </section>
-    <section>
-      <h2>Shot queue (<span id="count">0</span>/<span id="max">12</span>)</h2>
-      <div class="shots" id="slots"></div>
-      <div class="row">
-        <button class="primary" id="stitch" style="margin-top:0">Stitch sequence</button>
-        <button class="ghost" id="clear">Clear</button>
-      </div>
-    </section>
-    <section id="sequence">
-      <h2>Sequence</h2>
-      <div id="seqBody" style="color:var(--dim)">Build scenes, generate up to <span id="maxHint">12</span> shots, then stitch them in scene order into one clip.</div>
-    </section>
-  </div>
+  <section id="keyPanel">
+    <h2>1. Comfy API key</h2>
+    <div class="row">
+      <div><label for="key">Stored on this machine only (~/.anime-news/config.json). Without a key the engine renders offline placeholders.</label>
+        <input id="key" type="password" autocomplete="off" placeholder="paste your Comfy API key"></div>
+      <div class="tight"><button class="ghost" id="saveKey">Save key</button> <button class="ghost danger" id="clearKey">Clear</button></div>
+    </div>
+    <div class="hint" id="keyState"></div>
+  </section>
+
+  <section>
+    <h2>2. Headline</h2>
+    <label for="headline">Headline</label>
+    <input id="headline" type="text" maxlength="300" placeholder="Ancient Rome's senate switches to a 4-day week">
+    <label for="text">Article text or a link (optional)</label>
+    <textarea id="text" placeholder="Paste the article, some notes, or a URL to fetch"></textarea>
+    <div class="row">
+      <div><label for="minutes">Length (minutes)</label><input id="minutes" type="number" min="0.5" max="5" step="0.5" value="1"></div>
+      <div><label for="style">Style direction (optional)</label><input id="style" type="text" placeholder="e.g. rainy neon night, more kaiju"></div>
+      <div class="tight"><button class="primary" id="write">Write storyboard</button></div>
+    </div>
+  </section>
+
+  <section id="sbPanel" hidden>
+    <h2>3. Storyboard <span class="hint" id="sbStats"></span></h2>
+    <div class="hint">Edit anything. Add, delete or reorder scenes and shots; there is no shot limit. Every shot gets its own start frame, and the cut never shows a moment twice.</div>
+    <label for="logline">Logline</label><input id="logline" type="text">
+    <div id="scenes"></div>
+    <div class="row"><div class="tight"><button class="ghost" id="addScene">+ Scene</button> <button class="ghost" id="rewrite">Regenerate storyboard</button></div></div>
+  </section>
+
+  <section id="renderPanel" hidden>
+    <h2>4. Render</h2>
+    <div class="row">
+      <div><label for="quality">Quality</label><select id="quality"><option value="480p">480p (cheaper)</option><option value="720p">720p</option></select></div>
+      <div><label><input id="vertical" type="checkbox"> Also export 9:16</label></div>
+      <div class="tight"><button class="primary" id="render">Render episode</button> <button class="ghost danger" id="cancel" hidden>Cancel</button></div>
+    </div>
+    <div class="hint" id="jobState"></div>
+    <div class="progress"><div id="bar"></div></div>
+    <div id="result"></div>
+  </section>
+
+  <section>
+    <h2>Episodes</h2>
+    <div class="eps" id="episodes"></div>
+    <div class="hint" id="noEps" hidden>No finished episodes yet.</div>
+  </section>
 </main>
-<footer class="site-foot">Anime News · open source · #OpenSourceHiggsfield · MIT · <a id="repo-link" href="https://github.com/iamnolanhu/anime-news" target="_blank" rel="noopener">github.com/iamnolanhu/anime-news</a> · <a href="/episodes">Episodes</a></footer>
-<script>
-const $ = (id) => document.getElementById(id);
-// theme hooks (theme.js); no-ops if the theme or anime.js did not load
-const fx = (name, ...args) => { try { const t = window.theme; if (t && t[name]) t[name](...args); } catch (e) {} };
-let prevCount = null;
-const state = { body: "35mm", move: "dolly_in", engine: null, frame: null, presets: null, max: 12 };
-
-function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
-
-async function api(path, opts = {}) {
-  const r = await window.access.fetch(path, opts);  // adds X-Access-Token; asks for it once on 401
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detail || j.error || r.statusText);
-  return j;
-}
-
-function chips(el, items, key, fragEl) {
-  el.innerHTML = "";
-  for (const it of items) {
-    const b = document.createElement("button");
-    b.className = "chip" + (state[key] === it.id ? " on" : "");
-    b.textContent = it.label;
-    b.onclick = () => { state[key] = it.id; chips(el, items, key, fragEl); fx("pulse", el.querySelector(".chip.on")); };
-    el.appendChild(b);
-    if (state[key] === it.id) fragEl.textContent = it.fragment;
-  }
-}
-
-function renderQueue(serverShots) {
-  const shots = window.storyboard.reconcile(serverShots);  // queue shown (and stitched) in scene order
-  const pos = Object.fromEntries(shots.map((s, i) => [s.id, i + 1]));
-  $("count").textContent = shots.length;
-  $("slots").innerHTML = "";
-  const slots = Math.min(state.max, shots.length + 1);  // filled shots + one slot for the next shot
-  for (let i = 0; i < slots; i++) {
-    const s = shots[i], d = document.createElement("div");
-    d.className = "slot";
-    if (s) {
-      const cont = s.continued_from && pos[s.continued_from] ? ` (continues shot ${pos[s.continued_from]})` : "";
-      d.innerHTML = `<video src="${s.url}" muted loop autoplay playsinline></video><div class="meta">${i + 1}. ${s.move.replace("_", " ")} / ${s.body}<br>${s.engine || ""}${cont}</div>`;
-      d.title = s.prompt;
-    } else {
-      d.textContent = `Shot ${i + 1}`;
-    }
-    if (s) d.classList.add("filled");
-    $("slots").appendChild(d);
-  }
-  if (prevCount !== null && shots.length > prevCount) fx("land", $("slots").children[shots.length - 1]);
-  prevCount = shots.length;
-}
-
-async function busy(btn, label, fn) {
-  btn.disabled = true; status(label);
-  try { await fn(); } catch (e) { status(e.message, true); return; } finally { btn.disabled = false; }
-  status("");
-}
-
-function setFrame(j) { state.frame = j.frame; $("framePreview").src = j.url; $("framePreview").hidden = false; }
-
-$("file").onchange = () => busy($("file"), "Uploading frame...", async () => {
-  const fd = new FormData(); fd.append("file", $("file").files[0]);
-  setFrame(await api("/api/frame", { method: "POST", body: fd }));
-});
-
-$("genFrame").onclick = () => busy($("genFrame"), "Generating start frame...", async () => {
-  const prompt = $("framePrompt").value || "a cinematic scene";
-  setFrame(await api("/api/frame/generate", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, body: state.body }) }));
-});
-
-$("shoot").onclick = (e) => {
-  fx("burst", $("shoot"), e);
-  const slot = $("slots").children[Number($("count").textContent) || 0];
-  fx("scan", slot, true);
-  return busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
-    const beat = $("scene").value;
-    const sceneId = window.storyboard.begin();  // the shot lands in this scene even if the user switches meanwhile
-    try {
-      const req = window.storyboard.prepare({ body: state.body, move: state.move, scene: beat, frame: state.frame, engine: state.engine }, sceneId);
-      const shot = await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
-      window.storyboard.addShot(shot, beat, sceneId);
-    } finally {
-      window.storyboard.finish(sceneId);
-    }
-    renderQueue((await api("/api/queue")).shots);
-  }).finally(() => fx("scan", slot, false));
-};
-
-$("stitch").onclick = (e) => {
-  fx("burst", $("stitch"), e);
-  fx("scan", $("sequence"), true);
-  return busy($("stitch"), "Stitching...", async () => {
-    const j = await api("/api/stitch", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order: window.storyboard.order() }) });
-    $("seqBody").innerHTML = `<video src="${j.url}" controls autoplay></video><div class="row"><a href="${j.url}" download>Download ${j.file}</a></div>`;
-  }).finally(() => fx("scan", $("sequence"), false));
-};
-
-$("clear").onclick = async () => { renderQueue((await api("/api/queue", { method: "DELETE" })).shots); };
-
-(async () => {
-  const p = await api("/api/presets");
-  state.presets = p; state.max = p.max_shots;
-  $("max").textContent = $("maxHint").textContent = p.max_shots;
-  window.storyboard.init($("storyboard"), { presets: () => state.presets, max: () => state.max,
-    onChange: async () => renderQueue((await api("/api/queue")).shots) });
-  $("mode").textContent = p.mode === "mock" ? "MOCK MODE (offline)" : "LIVE: Comfy Router";
-  $("mode").className = "badge " + p.mode;
-  $("models").textContent = `${p.image_model} -> ${p.video_model}`;
-  chips($("bodies"), p.bodies, "body", $("bodyFrag"));
-  chips($("moves"), p.moves, "move", $("moveFrag"));
-  const engines = (p.engines || []).map((e) => ({ id: e.id, label: `${e.label} (${e.time})`, fragment: `${e.id}: ${e.best_for}` }));
-  if (p.video_model && !engines.some((e) => e.id === p.video_model)) {
-    engines.unshift({ id: p.video_model, label: p.video_model, fragment: `${p.video_model}: configured default (SHOT_DIRECTOR_VIDEO_MODEL)` });
-  }
-  state.engine = p.video_model || (engines[0] || {}).id;
-  chips($("engines"), engines, "engine", $("engineFrag"));
-  renderQueue((await api("/api/queue")).shots);
-})().catch((e) => status(e.message, true));
-</script>
+<script src="/static/studio.js"></script>
 </body>
 </html>

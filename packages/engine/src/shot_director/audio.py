@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from .router_client import BASE_URL, LiveRouter, RouterError, load_api_key
+from .router_client import BASE_URL, CREDITS, LiveRouter, RouterError, load_api_key
 
 log = logging.getLogger("shot_director.audio")
 
@@ -59,6 +59,7 @@ def _post_audio(model: str, body: dict, out: Path) -> Path:
                  "Idempotency-Key": str(uuid.uuid4())})
     try:
         with urllib.request.urlopen(req, timeout=180) as r:
+            CREDITS.record(r.headers)
             ctype = r.headers.get("Content-Type", "")
             data = r.read()
     except urllib.error.HTTPError as e:
@@ -87,6 +88,7 @@ def _post_audio(model: str, body: dict, out: Path) -> Path:
         if str(status.get("status", "")).upper() == "COMPLETED":
             rq = urllib.request.Request(f"{base}/{rid}", headers={"X-API-Key": key, "Accept": "*/*"})
             with urllib.request.urlopen(rq, timeout=120) as r:
+                CREDITS.record(r.headers)
                 if r.status == 200:
                     ctype, data = r.headers.get("Content-Type", ""), r.read()
                     if "json" not in ctype:

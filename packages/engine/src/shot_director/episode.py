@@ -430,11 +430,44 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+STALE_RENDERING_SECONDS = 2 * 3600   # a 'rendering' entry older than this belongs to a run that died
+
+
+def _age_seconds(entry: dict, now: datetime) -> float:
+    try:
+        created = datetime.fromisoformat(entry["created"])
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return (now - created).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return float("inf")   # no usable start time: it cannot be a live run
+
+
+def reconcile_interrupted(media: Path, service_started: datetime | None = None) -> int:
+    """At service start: every 'rendering' ledger entry begun before this service started (or more than two hours
+    ago) belongs to a run that no longer exists. Mark it failed ('interrupted') so its headline can render again.
+    Returns how many entries were changed."""
+    now = datetime.now(timezone.utc)
+    cutoff = service_started or now
+    changed = 0
+    with _PICK_LOCK, _LEDGER_LOCK:
+        items = read_ledger(media)
+        for e in items:
+            if e.get("status") != "rendering":
+                continue
+            if _age_seconds(e, now) > STALE_RENDERING_SECONDS or _age_seconds(e, cutoff) > 0:
+                e.update(status="failed", error="interrupted", finished=_now())
+                changed += 1
+        if changed:
+            _write_ledger(media, items)
+    return changed
+
+
 def _reserve(media: Path, headline: str, source: str,
              news_strategy: str | None = None) -> tuple[str, str, str, str]:
     """Under the pick lock: choose the story and write a 'rendering' ledger entry before any paid call.
     Auto-pick skips every headline already in the ledger (rendering, done or failed); an explicit
-    headline is refused only while another run is rendering it."""
+    headline is refused only while another run is rendering it (an entry older than two hours is a dead run)."""
     with _PICK_LOCK:
         ledger = read_ledger(media)
         link = ""
@@ -446,7 +479,8 @@ def _reserve(media: Path, headline: str, source: str,
                                   "stories about deaths/violence): pass a headline")
             headline, source, link = (story["title"], story.get("source_text") or story.get("source", ""),
                                       story.get("link", ""))
-        elif any(e.get("headline_raw") == headline and e.get("status") == "rendering" for e in ledger):
+        elif any(e.get("headline_raw") == headline and e.get("status") == "rendering"
+                 and _age_seconds(e, datetime.now(timezone.utc)) <= STALE_RENDERING_SECONDS for e in ledger):
             raise LookupError(f"already rendering: {headline}")
         entry_id = uuid.uuid4().hex[:12]
         _append_ledger(media, {"id": entry_id, "status": "rendering", "headline_raw": headline,

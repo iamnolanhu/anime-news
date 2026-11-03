@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 USAGE_FILE = "hosted-usage.json"
+JOBS_FILE = "jobs.json"
 
 
 def enabled() -> bool:
@@ -145,11 +146,14 @@ class Usage:
     def refund(self, ip: str, kind: str, usd: float, day: str | None = None) -> None:
         """Undo a charge whose work never started (writer failed, queued render cancelled). `day` is what charge()
         returned: a reservation from a day that has since rolled over is not refunded against today's budget."""
+        self.refund_hashed(self._who(ip), kind, usd, day)
+
+    def refund_hashed(self, who: str, kind: str, usd: float, day: str | None = None) -> None:
+        """refund() for a visitor known only by the hash that _who() makes (jobs saved across a restart)."""
         with self.lock:
             doc = self._load()
             if day is not None and day != doc["day"]:
                 return
-            who = self._who(ip)
             if doc[kind].get(who):
                 doc[kind][who] = int(doc[kind][who]) - 1
             doc["spent_usd"] = round(max(0.0, float(doc["spent_usd"]) - usd), 4)

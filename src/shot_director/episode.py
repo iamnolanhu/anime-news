@@ -208,7 +208,10 @@ def _merge_script(plan: dict, script: dict | None, body: str) -> None:
     prompts = iter(writer.script_to_prompts(script, body))
     for sc, ws in zip(plan["scenes"], script["scenes"]):
         sc.update(caption=ws["caption"], narration=ws["narration"], setting=ws["setting"],
-                  beat=ws["beat"], anchor=sc["kind"] in _ANCHOR_SCENES or ws["beat"] in _ANCHOR_BEATS)
+                  beat=ws["beat"],
+                  # the writer's beat decides the style reference: a vignette or crowd beat never gets the Anchor sheet,
+                  # even in a slot the template would have treated as the anchor desk
+                  anchor=(ws["beat"] in _ANCHOR_BEATS) if ws.get("beat") else (sc["kind"] in _ANCHOR_SCENES))
         for shot, w in zip(sc["shots"], ws["shots"]):
             shot.update(move=w["move"], caption=w["caption"], visual=w["visual"], scene=next(prompts))
         sc["scene"] = sc["shots"][0]["scene"]  # start frame = first shot

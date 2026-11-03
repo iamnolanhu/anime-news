@@ -485,7 +485,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                         shots.append({"kind": "clip", "src": src, "angle": k, "a": a, "b": b, "clock": clock})
                     else:
                         gated.append({"src": p, "angle": k, "gate": round(src.gate_at(a), 1)})
-            else:
+            else:   # a still is a source like any other: once taken, it never comes back (no A-B-A on a still)
+                used.add(p)
                 shots.append({"kind": "still", "path": p, "len": STILL_HOLD, "fallback_for": it.get("fallback_for"),
                               "clock": clock})
         shown = {sh["src"].path for sh in shots if sh["kind"] == "clip"}
@@ -493,9 +494,6 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if not shots:
             log.warning("scene %d: nothing usable (every window failed the sharpness gate), skipped", si)
             continue
-        for sh in shots:
-            if sh["kind"] == "still":
-                used.add(sh["path"])
         # runs: the stretches of action and stills between talk takes
         seq: list[dict | list[dict]] = []
         for sh in shots:

@@ -444,3 +444,19 @@ def test_a_line_never_meets_a_cut_in_its_first_08s_on_a_short_opening_angle(medi
         else:
             assert first[0]["extra"].get("freeze", 0) > 0                     # the only picture holds its last frame
         assert abs(v["played"] - v["file_dur"]) < 1e-3
+
+
+def test_a_still_once_left_never_returns(media, tmp_path):
+    """A still is a source like any other: listed twice in a scene, it is shown once and the cut never comes back
+    to it; the metric counts a return to a still."""
+    still = {"kind": "still", "path": str(media / "still1.png")}
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "shots": [still, {"kind": "action", "clip": str(media / "a.mp4")}, dict(still)]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert [s["kind"] for s in report["timeline"]] == ["still", "clip", "clip", "end"]
+    m = metrics(report)
+    assert m["returns_src"] == 0 and m["aba"] == 0
+    s1, a1 = report["timeline"][0], report["timeline"][1]
+    fake = dict(report, timeline=[s1, a1, dict(s1, at=a1["at"] + 1)] + report["timeline"][3:])
+    assert metrics(fake)["returns_src"] == 1                            # a still return is counted

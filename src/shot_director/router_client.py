@@ -56,6 +56,7 @@ FLUX_VIDEO_ASPECT_RATIO = "16:9"
 MINIMAX_DURATION = 4               # minimax-h3: 4-15 s
 MINIMAX_RESOLUTION = "768P"        # 768P | 2K
 MINIMAX_RATIO = "16:9"             # required (not adaptive) when there is no first frame
+SEEDANCE_TIMEOUT_SECONDS = 1500
 SEEDANCE_RESOLUTION = os.environ.get("SHOT_DIRECTOR_SEEDANCE_RESOLUTION", "480p")  # 480p | 720p | 1080p
 # 480p keeps a 5 s clip near $0.74 (Router bills $15.30 per 1M tokens, tokens = s * w * h * fps / 1024);
 # 720p is 2.25x that. The cut upscales to 1280x720.
@@ -147,12 +148,12 @@ class LiveRouter:
             msg = msg.get("message") or json.dumps(msg)
         return f"{doc.get('error_type')}: {msg or json.dumps(doc)[:400]}"
 
-    def _run_model(self, model: str, body: dict) -> dict:
+    def _run_model(self, model: str, body: dict, timeout: float = TIMEOUT_SECONDS) -> dict:
         base = f"{BASE_URL}/v2/models/{model}/requests"
         rid = self._req("POST", base, body).get("request_id")
         if not rid:
             raise RouterError("Router returned no request_id")
-        deadline = time.time() + TIMEOUT_SECONDS
+        deadline = time.time() + timeout
         while time.time() < deadline:
             _, hdrs, status = self._req_full("GET", f"{base}/{rid}/status")
             if status.get("error_type"):
@@ -228,7 +229,7 @@ class LiveRouter:
                                 "audio_url": {"url": _data_uri(voice_ref, "audio/mpeg")}})
             req = {"content": content, "duration": clamp_duration(model, duration), "generate_audio": True,
                    "resolution": SEEDANCE_RESOLUTION, "ratio": "adaptive" if frame is not None else "16:9"}
-            result = self._run_model(model, req)
+            result = self._run_model(model, req, timeout=SEEDANCE_TIMEOUT_SECONDS)  # 720p under load ran past 11 min
             # seedance output: {"status": succeeded|failed, "content": {"video_url"}, "error": {...}}
             if str(result.get("status", "")).lower() in {"failed", "cancelled", "expired"}:
                 raise RouterError(f"Seedance job {result.get('status')}: {result.get('error')}")

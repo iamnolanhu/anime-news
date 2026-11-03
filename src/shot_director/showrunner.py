@@ -158,6 +158,34 @@ def render(script: dict, router, media: Path, parallel: int = SHOT_PARALLEL) -> 
         return list(pool.map(lambda s: _render_shot(router, media, s, refs, voices), shots))
 
 
+def save_shots(media: Path, epid: str, script: dict, shots: list[dict]) -> Path:
+    path = media / f"{epid}.shots.json"
+    path.write_text(json.dumps({"script": script, "shots": shots}, indent=1))
+    return path
+
+
+def retry_failed(router, media: Path, shots_file: Path, parallel: int = SHOT_PARALLEL) -> Path:
+    """Re-render only the shots that failed (fresh frame + clip), then rewrite <epid>.plan.json for --recut."""
+    doc = json.loads(shots_file.read_text())
+    script, shots = doc["script"], doc["shots"]
+    todo = [i for i, s in enumerate(shots) if not s.get("id")]
+    refs = {"style": style.ensure_style_sheet(media, router)}
+    voices = {}
+    for sp in {shots[i]["speaker"] for i in todo if shots[i]["kind"] == "talk"}:
+        refs[sp], voices[sp] = character_sheet(router, media, sp), voice_sample(media, sp)
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        redone = list(pool.map(lambda i: _render_shot(router, media, {k: shots[i][k] for k in shots[i]
+                                                                      if k not in ("frame", "id", "error", "mode", "engine")},
+                                                      refs, voices), todo))
+    for i, r in zip(todo, redone):
+        shots[i] = r
+    epid = shots_file.name.removesuffix(".shots.json")
+    save_shots(media, epid, script, shots)
+    plan = media / f"{epid}.plan.json"
+    plan.write_text(json.dumps(edit_plan(script, shots, media), indent=1))
+    return plan
+
+
 # -- the cut ------------------------------------------------------------------------------------------
 
 def edit_plan(script: dict, shots: list[dict], media: Path) -> dict:
@@ -216,6 +244,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "", 
         if not done:
             raise RuntimeError("every shot failed: " + "; ".join(s["error"] or "" for s in shots)[:300])
         epid = f"episode-{uuid.uuid4().hex[:8]}"
+        save_shots(media, epid, script, shots)
         plan = edit_plan(script, shots, media)
         (media / f"{epid}.plan.json").write_text(json.dumps(plan, indent=1))
         out = media / f"{epid}.mp4"
@@ -248,6 +277,7 @@ def main() -> None:
     ap.add_argument("--plan-only", action="store_true", help="write the script and print the shot plan; no render")
     ap.add_argument("--recut", help="re-run only the cut from an existing <episode>.plan.json")
     ap.add_argument("--genre", help="vignette genre (default: picked from the headline)")
+    ap.add_argument("--retry", help="re-render the failed shots of an <episode>.shots.json and rewrite its plan")
     ap.add_argument("--no-cut", action="store_true", help="render the shots and write the plan; cut later with --recut")
     ap.add_argument("--mock", action="store_true")
     args = ap.parse_args()
@@ -274,6 +304,9 @@ def main() -> None:
         print(out)
         return
     router = make_router(media)
+    if args.retry:
+        print(retry_failed(router, media, Path(args.retry).resolve(), args.parallel))
+        return
     r = produce(router, media, args.headline, args.source, args.parallel, cut=not args.no_cut, plan_only=args.plan_only,
                 genre=args.genre)
     print(json.dumps({k: r[k] for k in r if k != "shots"} | {"shots": [

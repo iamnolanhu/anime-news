@@ -14,3 +14,4 @@ node_modules/
 media-iter/
 *.pid
 *.log
+.vercel

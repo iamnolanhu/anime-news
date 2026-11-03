@@ -1,4 +1,17 @@
 # anime-news (engine)
 
 The Python engine behind Anime News: a headline in, an anime news episode out, via the Comfy Router.
-Docs and setup live in the repository README one level up. Run it with `uv run anime-news --help`.
+It runs on your own machine; the Comfy API key stays in `~/.anime-news/config.json` (0600) or `COMFY_API_KEY`.
+
+```sh
+uv run anime-news serve                      # API + UI on http://127.0.0.1:8765 (media in ~/.anime-news/media)
+uv run anime-news storyboard "Mayor bans Mondays" --minutes 1 --save sb.json
+uv run anime-news render sb.json --quality 480p --vertical --estimate-only   # spend estimate, nothing spent
+uv run anime-news render sb.json --quality 480p --vertical --max-cost 5
+uv run anime-news make "Mayor bans Mondays" --minutes 1 --mock               # offline placeholder episode
+uv run anime-news render --retry ~/.anime-news/media/<episode>.shots.json   # re-render only failed shots
+uv run --group dev pytest                    # offline tests (mock mode, no network)
+```
+
+Storyboard schema: `docs/STORYBOARD.md`. HTTP contract: `/api/health`, `/api/config`, `/api/storyboard`,
+`/api/render`, `/api/jobs/{id}`, `/api/episodes`, `/media/{file}`. More in the repository README one level up.

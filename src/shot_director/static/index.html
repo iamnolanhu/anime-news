@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shot Director</title>
 <style>
-  :root { --bg:#0b0d12; --panel:#141821; --line:#262c3a; --text:#e6e9ef; --dim:#8a93a6; --accent:#ffb84d; }
+  /* base layout; fallback palette = brand gold, used only if theme.css fails to load */
+  :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
   header { display:flex; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
@@ -37,15 +38,20 @@
   #status.err { color:#ff8a8a; }
   a { color:var(--accent); }
 </style>
+<link rel="stylesheet" href="/static/theme.css">
+<script src="/static/vendor/anime.min.js" defer></script>
+<script src="/static/theme.js" defer></script>
 </head>
 <body>
+<canvas id="fx-particles" aria-hidden="true"></canvas>
 <header>
-  <h1>Shot Director</h1>
+  <h1 class="wordmark"><span class="wm-brand">the studio</span><span class="wm-sep">//</span><span class="wm-product">Shot Director</span></h1>
   <span id="mode" class="badge">...</span>
   <span class="badge" id="models"></span>
   <span style="flex:1"></span>
   <span id="status"></span>
 </header>
+<div id="ticker" class="ticker" role="marquee" aria-label="Headlines" hidden></div>
 <main>
   <div>
     <section class="frame">
@@ -94,6 +100,9 @@
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+// theme hooks (theme.js); no-ops if the theme or anime.js did not load
+const fx = (name, ...args) => { try { const t = window.theme; if (t && t[name]) t[name](...args); } catch (e) {} };
+let prevCount = null;
 const state = { body: "35mm", move: "dolly_in", engine: null, frame: null, presets: null, max: 3 };
 
 function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
@@ -111,7 +120,7 @@ function chips(el, items, key, fragEl) {
     const b = document.createElement("button");
     b.className = "chip" + (state[key] === it.id ? " on" : "");
     b.textContent = it.label;
-    b.onclick = () => { state[key] = it.id; chips(el, items, key, fragEl); };
+    b.onclick = () => { state[key] = it.id; chips(el, items, key, fragEl); fx("pulse", el.querySelector(".chip.on")); };
     el.appendChild(b);
     if (state[key] === it.id) fragEl.textContent = it.fragment;
   }
@@ -129,8 +138,11 @@ function renderQueue(shots) {
     } else {
       d.textContent = `Shot ${i + 1}`;
     }
+    if (s) d.classList.add("filled");
     $("slots").appendChild(d);
   }
+  if (prevCount !== null && shots.length > prevCount) fx("land", $("slots").children[shots.length - 1]);
+  prevCount = shots.length;
 }
 
 async function busy(btn, label, fn) {
@@ -152,16 +164,25 @@ $("genFrame").onclick = () => busy($("genFrame"), "Generating start frame...", a
     body: JSON.stringify({ prompt, body: state.body }) }));
 });
 
-$("shoot").onclick = () => busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
-  await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame, engine: state.engine }) });
-  renderQueue((await api("/api/queue")).shots);
-});
+$("shoot").onclick = (e) => {
+  fx("burst", $("shoot"), e);
+  const slot = $("slots").children[Number($("count").textContent) || 0];
+  fx("scan", slot, true);
+  return busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
+    await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: state.body, move: state.move, scene: $("scene").value, frame: state.frame, engine: state.engine }) });
+    renderQueue((await api("/api/queue")).shots);
+  }).finally(() => fx("scan", slot, false));
+};
 
-$("stitch").onclick = () => busy($("stitch"), "Stitching...", async () => {
-  const j = await api("/api/stitch", { method: "POST" });
-  $("seqBody").innerHTML = `<video src="${j.url}" controls autoplay></video><div class="row"><a href="${j.url}" download>Download ${j.file}</a></div>`;
-});
+$("stitch").onclick = (e) => {
+  fx("burst", $("stitch"), e);
+  fx("scan", $("sequence"), true);
+  return busy($("stitch"), "Stitching...", async () => {
+    const j = await api("/api/stitch", { method: "POST" });
+    $("seqBody").innerHTML = `<video src="${j.url}" controls autoplay></video><div class="row"><a href="${j.url}" download>Download ${j.file}</a></div>`;
+  }).finally(() => fx("scan", $("sequence"), false));
+};
 
 $("clear").onclick = async () => { renderQueue((await api("/api/queue", { method: "DELETE" })).shots); };
 

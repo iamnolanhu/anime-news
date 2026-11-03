@@ -1,0 +1,244 @@
+/* Shot Director: the studio cyberpunk anime theme.
+   Every value lives in a token below; reskin by changing tokens only (see THEME.md). */
+
+:root {
+  /* color: the studio monotone base */
+  --sd-bg: #000000;              /* page background (the 60) */
+  --sd-surface: #0d0d0d;         /* panels (the 30) */
+  --sd-surface-glass: rgba(13, 13, 13, .92); /* panels over the particle field */
+  --sd-input: #000000;           /* inputs, chips, slots */
+  --sd-text: #ffffff;            /* body text */
+  --sd-muted: #a3a3a3;           /* secondary text, captions */
+  --sd-hairline: rgba(255, 255, 255, .10);
+  /* color: gold accent (the 10) */
+  --sd-gold: #F5C518;
+  --sd-gold-deep: #C99700;
+  --sd-gold-pale: #FFE566;
+  --sd-gold-line: rgba(245, 197, 24, .28);   /* panel hairline */
+  --sd-gold-wash: rgba(245, 197, 24, .08);   /* selected chip fill */
+  --sd-on-gold: #000000;                     /* text on gold buttons */
+  /* color: cyberpunk cyan, under 2% of the screen */
+  --sd-cyan: #19E6FF;
+  /* color: state */
+  --sd-error: #ff6b6b;
+  /* glow */
+  --sd-glow-gold: 0 0 0 1px var(--sd-gold), 0 0 14px rgba(245, 197, 24, .45);
+  --sd-glow-gold-soft: 0 0 18px rgba(245, 197, 24, .18);
+  --sd-glow-cyan: 0 0 0 2px var(--sd-cyan), 0 0 10px rgba(25, 230, 255, .55);
+  /* shape */
+  --sd-radius: 2px;              /* cyberpunk: near-square */
+  --sd-cut: 12px;                /* corner cut on panels */
+  --sd-cut-sm: 6px;              /* corner cut on chips and buttons */
+  --sd-bracket: 14px;            /* gold corner bracket arm length */
+  /* scanlines */
+  --sd-scanline-alpha: .045;
+  --sd-scanline-gap: 3px;
+  /* type */
+  --sd-font: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --sd-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* motion */
+  --sd-dur-fast: 160ms;
+  --sd-ease: cubic-bezier(.23, 1, .32, 1);   /* strong ease-out */
+  --sd-ticker-speed: 40s;        /* one full marquee loop */
+  --sd-scanbar-speed: 1.1s;      /* one pass of the render progress bar */
+  --sd-speedline-dur: 520ms;     /* hover sweep on the Generate button */
+
+  /* map the base layout's variable names (inline <style> in index.html) onto the brand */
+  --bg: var(--sd-bg);
+  --panel: var(--sd-surface-glass);
+  --line: var(--sd-hairline);
+  --text: var(--sd-text);
+  --dim: var(--sd-muted);
+  --accent: var(--sd-gold);
+}
+
+/* ---------- base ---------- */
+html { background: var(--sd-bg); }
+body {
+  background: var(--sd-bg); color: var(--sd-text);
+  font-family: var(--sd-font); -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--sd-gold); color: var(--sd-on-gold); }
+header, .ticker, main { position: relative; z-index: 2; } /* UI above the particle canvas */
+
+/* ---------- particles canvas (theme.js draws into it) ---------- */
+#fx-particles {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  z-index: 0; pointer-events: none; display: block;
+}
+
+/* ---------- scanline overlay ---------- */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  background: repeating-linear-gradient(to bottom,
+    rgba(255, 255, 255, var(--sd-scanline-alpha)) 0,
+    rgba(255, 255, 255, var(--sd-scanline-alpha)) 1px,
+    transparent 1px, transparent var(--sd-scanline-gap));
+}
+
+/* ---------- header + wordmark ---------- */
+header { background: rgba(0, 0, 0, .8); border-bottom: 1px solid var(--sd-gold-line); }
+.wordmark {
+  margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--sd-text); white-space: nowrap;
+}
+.wordmark .wm-sep { color: var(--sd-gold); padding: 0 .3em; text-shadow: 0 0 8px rgba(245, 197, 24, .6); }
+.wordmark .wm-product { color: var(--sd-gold); }
+.badge {
+  font-family: var(--sd-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  border-radius: var(--sd-radius); border-color: var(--sd-hairline); color: var(--sd-muted);
+}
+.badge.mock { color: var(--sd-gold); border-color: var(--sd-gold-line); }
+.badge.live { color: var(--sd-cyan); border-color: rgba(25, 230, 255, .35); }
+#status { font-family: var(--sd-mono); font-size: 12px; color: var(--sd-muted); }
+#status.err { color: var(--sd-error); }
+
+/* ---------- holographic ticker (filled by the news feature) ----------
+   Markup: <div id="ticker" class="ticker"><div class="ticker-track">
+             <span class="ticker-item">...</span> ... (items listed twice for a seamless loop)
+           </div></div>   then remove the [hidden] attribute. */
+.ticker {
+  display: flex; align-items: center; overflow: hidden; white-space: nowrap;
+  height: 30px; padding: 0 22px; gap: 28px;
+  font-family: var(--sd-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--sd-gold-pale);
+  background:
+    linear-gradient(90deg, var(--sd-bg) 0, transparent 6%, transparent 94%, var(--sd-bg) 100%),
+    linear-gradient(180deg, rgba(245, 197, 24, .07), rgba(25, 230, 255, .03));
+  border-bottom: 1px solid var(--sd-gold-line);
+  text-shadow: 0 0 6px rgba(245, 197, 24, .35);
+}
+.ticker[hidden], .ticker:empty { display: none; }
+.ticker-track { display: inline-flex; gap: 28px; flex: none; animation: sd-marquee var(--sd-ticker-speed) linear infinite; }
+.ticker:hover .ticker-track { animation-play-state: paused; }
+.ticker a { color: var(--sd-gold-pale); text-decoration: none; }
+.ticker a:hover { color: var(--sd-cyan); }
+.ticker-item::before { content: "\25B8\00a0"; color: var(--sd-gold); }
+@keyframes sd-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ---------- panels: gold hairline, corner cuts, corner brackets ---------- */
+main section {
+  position: relative;
+  background: var(--sd-surface-glass);
+  border: 1px solid var(--sd-gold-line); border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - var(--sd-cut)) 0, 100% var(--sd-cut), 100% 100%, var(--sd-cut) 100%, 0 calc(100% - var(--sd-cut)));
+  box-shadow: inset 0 0 40px rgba(245, 197, 24, .03);
+}
+main section::before, main section::after {
+  content: ""; position: absolute; width: var(--sd-bracket); height: var(--sd-bracket); pointer-events: none;
+  border: 0 solid var(--sd-gold);
+}
+main section::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+main section::after { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+h2 { font-family: var(--sd-mono); font-size: 11px; letter-spacing: .18em; color: var(--sd-gold); }
+h2::before { content: "// "; color: var(--sd-muted); }
+
+/* ---------- form controls ---------- */
+label { color: var(--sd-muted); font-size: 12px; }
+select, input[type=text], textarea {
+  background: var(--sd-input); color: var(--sd-text);
+  border: 1px solid var(--sd-hairline); border-radius: var(--sd-radius);
+  transition: border-color var(--sd-dur-fast) var(--sd-ease);
+}
+input[type=file] { color: var(--sd-muted); font-family: var(--sd-mono); font-size: 12px; }
+input[type=file]::file-selector-button {
+  background: transparent; color: var(--sd-gold); border: 1px solid var(--sd-gold-line);
+  border-radius: var(--sd-radius); padding: 6px 10px; margin-right: 10px; cursor: pointer; font: inherit;
+}
+:focus-visible { outline: none; box-shadow: var(--sd-glow-cyan) !important; }
+
+/* ---------- chips ---------- */
+.chip {
+  position: relative; background: var(--sd-input); color: var(--sd-text);
+  border: 1px solid var(--sd-hairline); border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - var(--sd-cut-sm)) 0, 100% var(--sd-cut-sm), 100% 100%, 0 100%);
+  transition: border-color var(--sd-dur-fast) var(--sd-ease), color var(--sd-dur-fast) var(--sd-ease), transform var(--sd-dur-fast) var(--sd-ease);
+}
+.chip:active { transform: scale(.97); }
+.chip.on {
+  border-color: var(--sd-gold); color: var(--sd-gold); background: var(--sd-gold-wash);
+  box-shadow: inset 0 0 14px rgba(245, 197, 24, .22);
+  text-shadow: 0 0 8px rgba(245, 197, 24, .45);
+}
+
+/* ---------- buttons ---------- */
+button.primary {
+  position: relative; overflow: hidden; isolation: isolate;
+  background: var(--sd-gold); color: var(--sd-on-gold);
+  border-radius: 0; letter-spacing: .14em; text-transform: uppercase; font-size: 13px;
+  clip-path: polygon(0 0, calc(100% - var(--sd-cut-sm)) 0, 100% var(--sd-cut-sm), 100% 100%, var(--sd-cut-sm) 100%, 0 calc(100% - var(--sd-cut-sm)));
+  transition: background-color var(--sd-dur-fast) var(--sd-ease), transform var(--sd-dur-fast) var(--sd-ease);
+}
+button.primary::before { /* speed lines that sweep across the button on hover */
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: repeating-linear-gradient(105deg, transparent 0 14px, rgba(255, 255, 255, .6) 14px 16px, transparent 16px 34px);
+  transform: translateX(-100%); opacity: 0;
+}
+button.primary:active:not(:disabled) { background: var(--sd-gold-deep); transform: scale(.97); }
+button.ghost {
+  border-radius: 0; color: var(--sd-gold); border-color: var(--sd-gold-line);
+  font-family: var(--sd-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  transition: border-color var(--sd-dur-fast) var(--sd-ease), transform var(--sd-dur-fast) var(--sd-ease);
+}
+button.ghost:active:not(:disabled) { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  select:hover, input[type=text]:hover, textarea:hover { border-color: var(--sd-gold-line); }
+  .chip:hover:not(.on) { border-color: var(--sd-gold-line); color: var(--sd-gold-pale); }
+  button.primary:hover:not(:disabled) { background: var(--sd-gold-pale); }
+  button.primary:hover:not(:disabled)::before { animation: sd-speedlines var(--sd-speedline-dur) var(--sd-ease) forwards; }
+  button.ghost:hover:not(:disabled) { border-color: var(--sd-gold); }
+}
+@keyframes sd-speedlines { 0% { transform: translateX(-100%); opacity: 0; } 30% { opacity: 1; } 100% { transform: translateX(100%); opacity: 0; } }
+
+/* burst lines theme.burst() spawns on click (position: fixed, appended to <body>) */
+.fx-speedline {
+  position: fixed; left: 0; top: 0; height: 2px; width: 46px; pointer-events: none; z-index: 60;
+  background: linear-gradient(90deg, transparent, var(--sd-gold-pale) 40%, var(--sd-gold));
+  transform-origin: 0 50%; border-radius: 1px; box-shadow: 0 0 6px rgba(245, 197, 24, .7);
+}
+
+/* ---------- monospace captions for shot metadata ---------- */
+.fragment, .slot .meta, #models, #count { font-family: var(--sd-mono); letter-spacing: .02em; }
+.fragment { color: var(--sd-muted); font-size: 11.5px; }
+.slot .meta { color: var(--sd-muted); font-size: 11px; text-transform: uppercase; }
+
+/* ---------- shot queue slots ---------- */
+.slot {
+  position: relative; overflow: hidden; border-radius: 0;
+  border: 1px dashed var(--sd-hairline); background: rgba(0, 0, 0, .6);
+  font-family: var(--sd-mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+}
+.slot.filled { border: 1px solid var(--sd-gold-line); }
+.slot video, #sequence video, .frame img { border-radius: 0; }
+#sequence video { background: var(--sd-bg); border: 1px solid var(--sd-gold-line); }
+
+/* render state: theme.scan(el, true) adds .fx-scanning */
+.fx-scanning { border-color: var(--sd-gold) !important; border-style: solid !important; }
+.slot.fx-scanning { color: var(--sd-gold); }
+.fx-scanning::before { /* thin progress/scan bar on the top edge (pure CSS, works without anime.js) */
+  content: ""; position: absolute; left: 0; top: 0; height: 2px; width: 35%; border: 0;
+  background: linear-gradient(90deg, transparent, var(--sd-gold), var(--sd-gold-pale));
+  box-shadow: 0 0 8px var(--sd-gold);
+  animation: sd-scanbar var(--sd-scanbar-speed) linear infinite;
+}
+@keyframes sd-scanbar { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.fx-sweep { /* the light band theme.scan() moves across the card with anime.js */
+  position: absolute; top: 0; bottom: 0; left: 0; width: 40%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(245, 197, 24, .14) 42%, rgba(255, 229, 102, .30) 50%, rgba(245, 197, 24, .14) 58%, transparent);
+}
+
+/* ---------- links (cyan = continuation / navigation) ---------- */
+a { color: var(--sd-cyan); text-decoration-color: rgba(25, 230, 255, .4); text-underline-offset: 3px; }
+
+/* entrance stagger: theme.js adds .fx-enter to <html> only when anime.js loaded, then animates in */
+.fx-enter main section, .fx-enter header { opacity: 0; }
+
+/* ---------- reduced motion: keep color/state, drop movement ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-property: color, background-color, border-color, opacity !important; }
+  #fx-particles, .fx-speedline, .fx-sweep { display: none !important; }
+  .fx-enter main section, .fx-enter header { opacity: 1 !important; }
+  .fx-scanning::before { width: 100%; transform: none; } /* static gold bar = "rendering" */
+  .ticker { overflow-x: auto; }
+  .chip:active, button:active { transform: none !important; }
+}

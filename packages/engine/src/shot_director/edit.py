@@ -55,6 +55,8 @@ MOTION_FRAMES = 12         # motion energy of a window = mean frame difference o
 COUNTDOWN_RED = "0xFF2A2A"
 CLOCK = re.compile(r"\d+:\d\d")
 BED_VOLUME = 0.8
+BED_QUIET = 0.35           # the bed's level through the cold open; it builds to full by the last third (PsyopAnime)
+TRUE_PEAK = -1.0           # dBTP ceiling of the delivered file, measured after the AAC encode
 FONT_CANDIDATES = [
     os.environ.get("SHOT_DIRECTOR_FONT", ""),
     "/System/Library/Fonts/Supplemental/Arial Black.ttf",
@@ -858,10 +860,14 @@ def _audio_graph(plan: dict, segs: list[Seg], voices: list[dict], total: float, 
     music = resolve(plan.get("music"))
     music_wav = None
     if music:
+        # quiet through the cold open (the first scene), then a straight build to full at two thirds of the cut
+        a = changes[0] if len(changes) > 1 else 0.15 * total
+        b = max(a + 0.1, 2 * total / 3)
+        level = f"{BED_VOLUME}*if(lt(t,{a:.3f}),{BED_QUIET},min(1,{BED_QUIET}+{1 - BED_QUIET}*(t-{a:.3f})/{b - a:.3f}))"
         music_bus.add(["-stream_loop", "-1", "-i", music],
                       # timestamps from the sample count: a looped mp3's own timestamps run ahead of its
                       # samples, so trimming by them ended the bed ~0.6 s early
-                      f"{stereo},asetpts=N/SR/TB,atrim=0:{total:.3f},volume={BED_VOLUME},"
+                      f"{stereo},asetpts=N/SR/TB,atrim=0:{total:.3f},volume='{level}':eval=frame,"
                       f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, total - 1.2):.3f}:d=1.2")
         if voice_wav:   # duck the bed under dialogue and narration (never under SFX)
             k = music_bus.args.count("-i")
@@ -909,8 +915,35 @@ def _audio_graph(plan: dict, segs: list[Seg], voices: list[dict], total: float, 
     inputs = [a for w in stems for a in ("-i", str(w))]
     graph = ("".join(f"[{i + 1}:a]" for i in range(len(stems)))
              + f"amix=inputs={len(stems)}:normalize=0:duration=longest,"
-             f"loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000,apad,atrim=0:{total:.3f}[aout]")
+             f"loudnorm=I=-14:TP={TRUE_PEAK - 0.5}:LRA=11,aresample=48000,apad,atrim=0:{total:.3f}[aout]")
     return inputs, graph, notes
+
+
+def loudness(path: Path) -> dict:
+    """Integrated loudness (LUFS) and true peak (dBTP) of a file's audio, measured by ffmpeg's ebur128."""
+    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af",
+                        "ebur128=peak=true:framelog=quiet", "-f", "null", "-"], capture_output=True, text=True)
+    summary = p.stderr[p.stderr.rfind("Summary:"):]
+    i = re.search(r"I:\s+(-?[0-9.]+|-inf) LUFS", summary)
+    tp = re.search(r"True peak:\s+Peak:\s+(-?[0-9.]+|-inf) dBFS", summary)
+    val = (lambda m: float(m.group(1)) if m and m.group(1) != "-inf" else None)
+    return {"I": val(i), "TP": val(tp)}
+
+
+def _cap_true_peak(out: Path) -> dict:
+    """loudnorm's single pass and the AAC encode overshoot its peak target (the review measured -0.7 dBTP against
+    -1.0): measure the file and, while its true peak is over TRUE_PEAK, turn the audio down by the excess."""
+    lv = loudness(out)
+    for _ in range(3):
+        if lv["TP"] is None or lv["TP"] <= TRUE_PEAK:
+            break
+        tmp = out.with_name(out.stem + ".tp" + out.suffix)
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(out), "-map", "0", "-c:v", "copy", "-af",
+              f"volume={TRUE_PEAK - 0.15 - lv['TP']:.2f}dB", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+              "-movflags", "+faststart", str(tmp)])
+        tmp.replace(out)
+        lv = loudness(out)
+    return lv
 
 
 # ---------------------------------------------------------------- public
@@ -966,6 +999,7 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
              ["-filter_complex", graph, "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac",
               "-b:a", "192k", "-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)])
     report = cut_report(plan, segs, voices, notes)
+    report["loudness"] = _cap_true_peak(out) if audio else None
     Path(str(out) + ".cuts.json").write_text(json.dumps(report, indent=1))
     log.info("cut: %s shots, %.1fs, %s cuts/min, audio=%s", report["shots"], total,
              report["cuts_per_minute"], notes)

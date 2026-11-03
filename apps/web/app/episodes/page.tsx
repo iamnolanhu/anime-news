@@ -5,7 +5,7 @@ import { episodes } from "@/lib/episodes";
 
 export const metadata: Metadata = {
   title: "Episodes",
-  description: "Finished Anime News episodes: one headline each, every shot rendered fresh, none reused.",
+  description: "The Weekly Briefing: one anime episode per week, five headlines each, every shot rendered fresh, none reused.",
 };
 
 export default function EpisodesPage() {
@@ -15,7 +15,7 @@ export default function EpisodesPage() {
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
         <h1 className="display text-[clamp(3rem,8vw,6rem)]">Episodes</h1>
         <p className="meta max-w-md pb-2">
-          Each one started as a single headline. Every shot was rendered for this episode, and no moment of footage appears twice.{" "}
+          One episode per ISO week, built from that week's top headlines. Every shot was rendered for this episode, and no moment of footage appears twice.{" "}
           <Link href="/studio" className="link-cyan">Make your own</Link>.
         </p>
       </div>

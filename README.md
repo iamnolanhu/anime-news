@@ -90,8 +90,10 @@ Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
 | GET | `/api/news` | | `{items: [{title, link, source, published, feed}]}` (10) |
-| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
+| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
 | GET | `/api/episodes` | | `{episodes: [ledger entries], auto}` |
+
+**Script writer and style sheet.** Before rendering, the template plan is rewritten by the Router script writer (`writer.py`, one chat-model call, cached per headline in `<media>/scripts-cache.json`, see `docs/WRITER.md`): logline, each scene's setting, caption and narration, each shot's move, caption and prompt. Any writer failure (mock mode, no key, bad reply, wrong counts) keeps the template; the plan's `script` field says which one ran. Anchor-desk scenes (cold open, sign-off, the 1-minute single scene, writer beats `anchor_desk`/`thesis`) take their start frame from the series style sheet (`style.py`, `<media>/style-sheet.png`, made once), so the Anchor and the look stay the same across episodes; crowd and vignette scenes use a plain frame, because the reference copies the Anchor's face onto everyone. `--no-writer` / `"writer": false` and `--no-style-sheet` / `"style_sheet": false` turn them off.
 
 **The cut.** After the clips exist, the episode goes through the anime cut (`edit.assemble`, see `docs/EDIT.md`): yellow one-clause subtitles from each scene's shot captions, the scene's narration line read by ElevenLabs on the Router, one music bed and two SFX (whoosh + impact on scene changes), fast cuts (about 35 a minute). The plain stitch is kept next to it as `episode-<id>.sequence_raw.mp4`. Sound fails soft (silent track in mock mode or without a key); if the cut itself fails, the raw stitch is the episode. A scene whose Router job fails keeps the clips it rendered and the episode still cuts; failures are listed in `errors`. `--no-cut` (CLI) or `"cut": false` (API) skips the cut; it adds about 1 to 2 minutes of ffmpeg time, inside the same synchronous request.
 
@@ -102,7 +104,7 @@ uv run shot-director-episode                                  # top new story ->
 uv run shot-director-episode --minutes 5                      # target length
 uv run shot-director-episode --headline "Mayor bans Mondays" --mock --out /tmp/ep
 uv run shot-director-episode --loop --every 60m               # self-running: a new story every hour
-# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --mock --out DIR --no-cut --loop --every
+# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --mock --out DIR --no-cut --no-writer --no-style-sheet --loop --every
 # one-shot prints the episode mp4 path, then one JSON summary line; --loop prints one JSON line per tick
 ```
 

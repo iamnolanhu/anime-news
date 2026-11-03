@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import news, presets, stitch
+from . import news, presets, stitch, style, writer
 from .router_client import CONTINUATION_ENGINE, ENGINES, VIDEO_MODEL, clamp_duration
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -160,7 +160,7 @@ def _trim(beats: list, count: int) -> list:
 
 def plan_episode(headline: str, source: str = "", body: str = "anime",
                  minutes: float = DEFAULT_MINUTES, clip_seconds: int = DEFAULT_CLIP_SECONDS,
-                 engine: str | None = None) -> dict:
+                 engine: str | None = None, use_writer: bool = False, media: Path | None = None) -> dict:
     """Headline -> {headline, source, series, logline, scene, minutes, clip_seconds (effective, after
     the engine clamps it), clip_seconds_requested, engine,
     scenes: [{index, kind, setting, scene, caption, narration,
@@ -182,24 +182,60 @@ def plan_episode(headline: str, source: str = "", body: str = "anime",
                        "scene": shots[0]["scene"],  # the start frame shows the scene's first beat
                        "caption": shots[0]["caption"], "narration": tpl["narration"].format(**fill),
                        "shots": shots})
-    return {"headline": h, "source": source.strip(), "series": SERIES_TITLE,
+    for sc in scenes:
+        sc["anchor"] = sc["kind"] in _ANCHOR_SCENES
+    plan = {"headline": h, "source": source.strip(), "series": SERIES_TITLE, "script": "template",
             "logline": _pick(h, _LOGLINES, "logline").format(h=h, title=SERIES_TITLE),
             "scene": scenes[0]["scene"], "minutes": minutes, "engine": engine,
             "clip_seconds": effective, "clip_seconds_requested": requested,
             "scenes": scenes, "shots": [s for sc in scenes for s in sc["shots"]]}
+    if use_writer:
+        _merge_script(plan, writer.write_script(h, plan["source"], minutes, len(counts), counts,
+                                                SERIES_TITLE, media_dir=media), body)
+    return plan
+
+
+_ANCHOR_SCENES = ("single", "cold_open", "sign_off")          # template scenes set at the anchor desk
+_ANCHOR_BEATS = ("cold_open", "anchor_desk", "sign_off", "thesis")  # writer beats set at the anchor desk
+
+
+def _merge_script(plan: dict, script: dict | None, body: str) -> None:
+    """Overlay the Router writer's script (captions, narration, moves, prompts) on the template plan.
+    None (mock mode, no key, bad reply) keeps the template."""
+    if not script:
+        print("[shot-director] script: template (writer unavailable)", file=sys.stderr, flush=True)
+        return
+    prompts = iter(writer.script_to_prompts(script, body))
+    for sc, ws in zip(plan["scenes"], script["scenes"]):
+        sc.update(caption=ws["caption"], narration=ws["narration"], setting=ws["setting"],
+                  beat=ws["beat"], anchor=sc["kind"] in _ANCHOR_SCENES or ws["beat"] in _ANCHOR_BEATS)
+        for shot, w in zip(sc["shots"], ws["shots"]):
+            shot.update(move=w["move"], caption=w["caption"], visual=w["visual"], scene=next(prompts))
+        sc["scene"] = sc["shots"][0]["scene"]  # start frame = first shot
+    first = plan["scenes"][0]["shots"][0]
+    first["caption"] = script.get("cold_open_caption") or first["caption"]
+    if script.get("sign_off"):
+        plan["scenes"][-1]["narration"] = f"{plan['scenes'][-1]['narration']} {script['sign_off']}".strip()
+    plan.update(logline=script["logline"], scene=plan["scenes"][0]["scene"],
+                shots=[s for sc in plan["scenes"] for s in sc["shots"]],
+                script="writer" + (f":{script['model']}" if script.get("model") else ""))
 
 
 # -- rendering ---------------------------------------------------------------------------------
 
-def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_seconds: int) -> dict:
+def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_seconds: int,
+                  styled: bool = False) -> dict:
     """One start frame, then the scene's clips in order; FLUX 3 Video (live) continues clip to clip.
     Fail-soft: an error stops this scene only; the clips rendered so far are kept and `error` is set."""
     out = {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
            "narration": sc["narration"], "frame": None, "shots": [], "error": None}
     try:
         frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
-        router.generate_frame(f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}.", body,
-                              media / frame_name)
+        frame_prompt = f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}."
+        if styled and sc.get("anchor"):  # the sheet's Anchor; crowd scenes stay plain (it clones his face)
+            style.generate_styled_frame(router, frame_prompt, media / frame_name, media)
+        else:
+            router.generate_frame(frame_prompt, body, media / frame_name)
         out["frame"] = {"frame": frame_name, "url": f"/media/{frame_name}"}
         previous = None
         for s in sc["shots"]:
@@ -259,7 +295,7 @@ def _cut(result: dict, media: Path, epid: str, scenes: list[dict]) -> tuple[Path
 
 
 def render_episode(plan: dict, router, media: Path, body: str = "anime", engine: str | None = None,
-                   parallel: int = DEFAULT_PARALLEL, cut: bool = True) -> dict:
+                   parallel: int = DEFAULT_PARALLEL, cut: bool = True, style_sheet: bool = True) -> dict:
     """Render every scene (scenes in parallel, a failed scene keeps what it rendered), stitch the raw
     sequence, then (cut=True) assemble the anime cut with captions, narration, SFX and music.
     Uses its own shot list, not the UI queue."""
@@ -267,9 +303,10 @@ def render_episode(plan: dict, router, media: Path, body: str = "anime", engine:
     if engine not in KNOWN_ENGINES:
         raise ValueError(f"unknown engine: {engine}")
     media.mkdir(parents=True, exist_ok=True)
+    styled = bool(style_sheet and router.mode == "live" and style.ensure_style_sheet(media, router))
     with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
         scenes = list(pool.map(lambda sc: _render_scene(router, media, sc, body, engine,
-                                                        plan["clip_seconds"]), plan["scenes"]))
+                                                        plan["clip_seconds"], styled), plan["scenes"]))
     shots = [s for sc in scenes for s in sc["shots"]]
     if not shots:
         raise RuntimeError("every scene failed: " + "; ".join(f"scene {sc['index']}: {sc['error']}" for sc in scenes))
@@ -351,7 +388,8 @@ def _reserve(media: Path, headline: str, source: str) -> tuple[str, str, str, st
 def produce(router, media: Path, headline: str | None = None, source: str = "",
             engine: str | None = None, body: str = "anime", minutes: float = DEFAULT_MINUTES,
             clip_seconds: int = DEFAULT_CLIP_SECONDS, parallel: int = DEFAULT_PARALLEL,
-            render: bool = True, cut: bool = True) -> dict:
+            render: bool = True, cut: bool = True, use_writer: bool = True,
+            style_sheet: bool = True) -> dict:
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
     headline = (headline or "").strip()
@@ -367,14 +405,15 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
                 raise LookupError("no acceptable new headline: pass a headline")
             headline, source = story["title"], story.get("source", "")
         return plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
-                            engine=engine)
+                            engine=engine, use_writer=use_writer, media=media)
     media.mkdir(parents=True, exist_ok=True)
     entry_id, headline, source, link = _reserve(media, headline, source)
     started = time.time()
     try:
         plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
-                            engine=engine)
-        result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel, cut=cut)
+                            engine=engine, use_writer=use_writer, media=media)
+        result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel, cut=cut,
+                                style_sheet=style_sheet)
     except BaseException as e:
         _update_ledger(media, entry_id, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:300],
                                          "finished": _now()})
@@ -448,6 +487,8 @@ def main() -> None:
     ap.add_argument("--mock", action="store_true", help="offline placeholder render, no Router calls")
     ap.add_argument("--out", default=str(ROOT / "media"), help="media dir for frames, clips, episodes and the ledger")
     ap.add_argument("--no-cut", action="store_true", help="skip the anime cut: the episode is the plain stitch")
+    ap.add_argument("--no-writer", action="store_true", help="template script only, no Router script writer")
+    ap.add_argument("--no-style-sheet", action="store_true", help="plain start frames, no series style sheet")
     ap.add_argument("--loop", action="store_true", help="keep running: one new episode every --every")
     ap.add_argument("--every", default="60m", help="loop interval, e.g. 60m, 1h, 30s (default 60m)")
     args = ap.parse_args()
@@ -461,7 +502,8 @@ def main() -> None:
     media.mkdir(parents=True, exist_ok=True)
     router = make_router(media)
     opts = dict(engine=args.engine, body=args.body, minutes=args.minutes,
-                clip_seconds=args.clip_seconds, parallel=args.parallel, cut=not args.no_cut)
+                clip_seconds=args.clip_seconds, parallel=args.parallel, cut=not args.no_cut,
+                use_writer=not args.no_writer, style_sheet=not args.no_style_sheet)
     if args.loop:
         print(f"[shot-director] {router.mode} channel: one episode every {args.every} into {media}",
               file=sys.stderr)
@@ -481,7 +523,8 @@ def main() -> None:
                       "logline": result["logline"], "mode": router.mode,
                       "engine": result["shots"][0]["engine"], "scenes": len(result["scenes"]),
                       "clips": len(result["shots"]), "moves": [s["move"] for s in result["shots"]],
-                      "cut": result["cut"], "errors": result["errors"], "episode": str(path),
+                      "script": result["script"], "cut": result["cut"], "errors": result["errors"],
+                      "episode": str(path),
                       "raw": str(media / result["sequence_raw"]["file"])}))
 
 

@@ -152,6 +152,8 @@ class EpisodeRequest(BaseModel):
     clip_seconds: int = episode.DEFAULT_CLIP_SECONDS
     parallel: int = episode.DEFAULT_PARALLEL
     cut: bool = True             # anime cut with captions, narration, SFX, music (adds about 60-90 s)
+    writer: bool = True          # Router script writer; false = template script
+    style_sheet: bool = True     # anchor-desk start frames use the series style sheet
 
 
 @app.get("/api/news")
@@ -165,7 +167,8 @@ def run_episode(req: EpisodeRequest) -> dict:
         return episode.produce(router, MEDIA, headline=req.headline, source=req.source,
                                engine=req.engine, body=req.body, minutes=req.minutes,
                                clip_seconds=req.clip_seconds, parallel=req.parallel,
-                               render=req.render, cut=req.cut)
+                               render=req.render, cut=req.cut, use_writer=req.writer,
+                               style_sheet=req.style_sheet)
     except LookupError as e:
         raise HTTPException(503, str(e)) from e
     except ValueError as e:

@@ -16,13 +16,13 @@ storyboard is checked by the same rules as the writer's reply.
   "title_card": "MONDAY IS CANCELLED",
   "countdown": "MONDAY ENDS IN",
   "cast": [
-    {"id": "anchor", "name": "KUROGANE", "role": "the Anchor", "look": "a stern middle-aged news anchor ...", "voice": "onwK4e9ZLuTAKqWW03F9"}
+    {"id": "anchor", "name": "SHION", "role": "the Anchor", "look": "adult woman, mid-20s, crimson-red hair in a sleek high ponytail ...", "voice": "EXAVITQu4vr4xnSDxMaL"}
   ],
   "scenes": [
     {"id": "s1", "act": "cold_open", "setting": "a dark invented capital at night", "caption": "", "narration": "",
      "shots": [
        {"id": "s1_1", "kind": "action", "cast": [], "prompt": "Extreme close-up of a red countdown clock ...", "move": "crash_zoom", "seconds": 5},
-       {"id": "s1_2", "kind": "talk", "cast": ["anchor"], "line": "Welcome to The Weekly Briefing. This week: Mondays are gone.", "prompt": "Medium shot of KUROGANE at the desk", "move": "dolly_in", "seconds": 5}
+       {"id": "s1_2", "kind": "talk", "cast": ["anchor"], "line": "Welcome to The Weekly Briefing. This week: Mondays are gone.", "prompt": "Medium shot of SHION at the desk", "move": "dolly_in", "seconds": 5}
      ]}
   ]
 }
@@ -34,7 +34,7 @@ storyboard is checked by the same rules as the writer's reply.
 | --- | --- |
 | `headline` | required, non-empty |
 | `minutes` | above 0, at most 5 (default 1) |
-| `cast[]` | `id` (slug), `name`, `role`, `look` (drawn-anime description, used in every frame prompt the member is in), `voice` (an ElevenLabs voice id used as Seedance's voice reference; anything else falls back to a default voice). Optional: `trait` (personality, given to the writer), `poses` (see "The cast file"). Missing or empty: the default cast (`<media>/cast.json` when present, else KUROGANE, VEX, DR. HAKASE). Original characters only, never a real person. |
+| `cast[]` | `id` (slug), `name`, `role`, `look` (drawn-anime description, used in every frame prompt the member is in), `voice` (an ElevenLabs voice id used as Seedance's voice reference; anything else falls back to a default voice). Optional: `trait` (personality, given to the writer), `poses` (see "The cast file"). Missing or empty: the default cast (`<media>/cast.json` when present, else SHION, HINA, DR. RENA). Original characters only, never a real person. |
 | `scenes[].act` | `cold_open`, `setup`, `escalation`, `turn`, `climax`, `sign_off`. A cold open has no caption and no narration. |
 | `scenes[].setting` | where the scene happens; added to every frame prompt of the scene |
 | `scenes[].caption` | the scene's one-line summary (60 chars max); the cut draws no caption over wordless pictures (subtitles are what is spoken), so it is not shown on screen; a weekly segment's headline is, as a lower-third |
@@ -63,9 +63,9 @@ Fields a member leaves out fall back to the built-in member with the same id.
 ```json
 {"cast": [
   {"id": "anchor", "name": "SHION", "role": "the Anchor",
-   "look": "adult woman, mid-20s, long straight silver-lavender hair in a hime cut, thin gold-rimmed glasses, black blazer with gold trim",
+   "look": "adult woman, mid-20s, crimson-red hair in a sleek high ponytail, sharp amber eyes, navy suit jacket with gold piping, a gold fountain pen",
    "trait": "perfectly composed; one raised eyebrow is the whole punchline",
-   "voice": "<ElevenLabs voice id>",
+   "voice": "EXAVITQu4vr4xnSDxMaL",
    "poses": {"talk":   {"id": "upper80v2_P019", "phrase": "tucks a strand of hair behind her ear",
                         "ref_image": "/abs/path/to/a/small/copy/of/upper80v2_P019_front.png"},
              "action": "speaks with one hand open in a gesture, the other holding her notes, mid-sentence",

@@ -42,8 +42,8 @@ STYLE_LEAD = "2D cel anime frame, drawn animation, not a photograph, not a 3D re
 _SAFETY = ("Safe for work, no weapons, no gore. No real people, no real faces, no likeness of any "
            "public figure; every character is an original invented archetype")
 # Fixed character block, reused in every prompt for consistency (original design).
-_ANCHOR = ("the Anchor, an original stern middle-aged news anchor with a silver crew cut, round "
-           "glasses and a gold-trimmed black blazer, drawn with heavy inked lines")
+_ANCHOR = (f"the Anchor, {writer.CAST['anchor']['name']}, an original character, {writer.CAST['anchor']['look']}, "
+           "drawn with heavy inked lines")
 _DESK = (f"{_ANCHOR}, seated at a long news desk in front of a wall of glowing world-map monitors "
          "showing invented countries")
 

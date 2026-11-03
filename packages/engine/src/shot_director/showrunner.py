@@ -37,11 +37,9 @@ GENRES = ["samurai duel at dawn", "giant-robot launch sequence", "kaiju attack o
 ACTION_SECONDS = 5
 SHOT_PARALLEL = 5
 # ElevenLabs premade voices used only as timbre references for Seedance (the clip speaks the line itself).
-VOICES = {"anchor": os.environ.get("SHOT_DIRECTOR_VOICE_ANCHOR", "onwK4e9ZLuTAKqWW03F9"),       # deep news presenter
-          "operative": os.environ.get("SHOT_DIRECTOR_VOICE_OPERATIVE", "XB0fDUnXU5powFXDhCwa"),  # cool, low
-          "analyst": os.environ.get("SHOT_DIRECTOR_VOICE_ANALYST", "N2lVS1w4EtoT3dr4eOWO")}      # hoarse, intense
-VOICE_SAMPLE = {"anchor": "Good evening. This is Kurogane. The situation is grave, and it is getting worse.",
-                "operative": "Vex here. I'm on location. Nobody saw me come in, and nobody will see me leave.",
+VOICES = {cid: os.environ.get(f"SHOT_DIRECTOR_VOICE_{cid.upper()}", c["voice"]) for cid, c in writer.CAST.items()}
+VOICE_SAMPLE = {"anchor": f"Good evening. This is {writer.CAST['anchor']['name'].title()}. The situation is grave, and it is getting worse.",
+                "operative": f"{writer.CAST['operative']['name'].title()} here. I'm on location, and the situation is behind me. Do not look behind me.",
                 "analyst": "It's all connected. The pigeons, the paperwork, the pizza. I have charts. So many charts."}
 STYLE = ("Flat cel-shaded 2D anime, late-1980s OVA hand-inked heavy linework, animated on twos, smear frames, "
          "film grain, VHS softness, teal shadows and burnt-orange highlights")

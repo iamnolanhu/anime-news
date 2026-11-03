@@ -47,8 +47,8 @@ VOICE
 
 CAST (original archetypes only; never anyone else)
 - "the Anchor": stern host at a news desk in front of a wall of world-map monitors. Recurring spine of the show.
-- "the Field Operative": trench-coated reporter on location, treats everything like a covert mission.
-- "the Analyst": sleep-deprived expert surrounded by charts and red string boards.
+- "the Field Reporter": a hoodie-and-press-vest reporter on location, fearless, reports from inside the disaster with a straight face.
+- "the Analyst": an unbothered expert with a chart for everything and a tiny smug smile when she is right.
 - Crowds, officials and staffers are invented, unnamed extras.
 
 HARD RULES
@@ -259,18 +259,21 @@ def script_to_prompts(script: dict, body: str = "anime") -> list[str]:
 # -- v2: a story with a recurring cast, spoken lines and acts (docs/psyopanime-pipeline-v2.md, D2) ----------
 
 CAST = {
-    "anchor": {"name": "KUROGANE", "role": "the Anchor",
-               "look": "a stern middle-aged news anchor with a short silver crew cut, round glasses, a black "
-                       "blazer with gold trim and a PRESS badge",
-               "trait": "unshakeable gravitas; reads every absurd fact like a declaration of war"},
-    "operative": {"name": "VEX", "role": "the Field Operative",
-                  "look": "a young woman with a sharp black bob, mirrored aviator sunglasses, an earpiece and a "
-                          "long beige trench coat",
-                  "trait": "treats every story like a covert mission; whispers into her wrist"},
-    "analyst": {"name": "DR. HAKASE", "role": "the Analyst",
-                "look": "a gaunt sleep-deprived man with wild grey hair, dark eye bags, a rumpled lab coat and a "
-                        "chipped mug that says DO NOT PANIC, a red-string evidence board behind him",
-                "trait": "has connected everything to everything; panics in a whisper"},
+    "anchor": {"name": 'SHION', "role": 'the Anchor',
+              "look": 'adult woman, mid-20s, crimson-red hair in a sleek high ponytail with long side-swept bangs, sharp amber eyes, no glasses, small gold earpiece, deep navy suit jacket with gold piping buttoned over a black turtleneck, a gold fountain pen',
+              "trait": 'perfectly composed; reads the most absurd fact with total gravity, and one raised eyebrow is the whole punchline',
+              "voice": 'EXAVITQu4vr4xnSDxMaL',
+              "poses": {"talk": {"id": "upper80v2_P019", "phrase": "tucks a strand of hair behind her ear"}, "action": {"id": "stage-gesture", "phrase": "speaks with one hand open in a gesture, the other holding a microphone or notes, mid-sentence"}, "still": {"id": "upper80v2_P013", "phrase": "rests her chin on both palms, a flower shape"}}},
+    "operative": {"name": 'HINA', "role": 'the Field Reporter',
+                 "look": 'adult woman, mid-20s, short messy copper-orange bob with one upright cowlick strand, bright green eyes, light freckles, oversized mustard-yellow hoodie under a navy press vest with a PRESS patch, cargo pants, chunky sneakers, a handheld microphone with a fuzzy grey windscreen',
+                 "trait": 'fearless and all-in; reports from inside the disaster with a straight face, then gives a thumbs-up',
+                 "voice": 'FGY2WhTYpPnrIDTdsKH5',
+                 "poses": {"talk": {"id": "upper80v2_P022", "phrase": "points at the camera, grinning"}, "action": {"id": "full_single_P017", "phrase": "stands turned away from the camera, glancing back over her shoulder"}, "still": {"id": "full_single_P061", "phrase": "crouches down with her hands on her knees"}}},
+    "analyst": {"name": 'DR. RENA', "role": 'the Analyst',
+               "look": 'adult woman, mid-20s, long wavy dark-teal hair worn loose over one shoulder, red half-rim glasses, calm golden eyes, charcoal blazer with rolled sleeves over a white shirt and a thin black tie, a clipboard of charts',
+               "trait": 'unbothered and half-lidded; has a chart for everything, connects everything to everything, and allows herself one tiny smug smile when the chart is right',
+               "voice": 'pFZP5JQG7iQjIQuC4Bku',
+               "poses": {"talk": {"id": "full_single_P015", "phrase": "stands with her weight on one leg, hip relaxed, one hand on her hip"}, "action": {"id": "turning-off-frame", "phrase": "turns her head and shoulders toward something off frame, caught mid-turn, hair swinging"}, "still": {"id": "upper80v2_P010", "phrase": "holds one finger to her lips, shh"}}},
 }
 SPEAKERS = tuple(CAST)
 LINE_MAX_WORDS = 14
@@ -290,10 +293,10 @@ Running gag every episode: the countdown reaches zero and something tiny and ant
 
 ACT STRUCTURE (fixed; the user message gives the exact shot slots)
 1. cold_open: image only, NO words, no captions. A mysterious, gorgeous hook that makes you need the next shot.
-2. thesis: KUROGANE states the headline as a grave briefing line, then a literal visual.
-3. escalation: VEX reports from the field, the countdown starts, things get bigger and dumber.
-4. vignette: a genre pastiche dramatizes the moral; DR. HAKASE explains the conspiracy in one line.
-5. button: KUROGANE's twist line, ending EXACTLY with "Back next week."
+2. thesis: SHION states the headline as a grave briefing line, then a literal visual.
+3. escalation: HINA reports from the field, the countdown starts, things get bigger and dumber.
+4. vignette: a genre pastiche dramatizes the moral; DR. RENA explains the conspiracy in one line.
+5. button: SHION's twist line, ending EXACTLY with "Back next week."
 {callback}
 WRITING RULES
 - Spoken lines: <= {max_words} words, one or two short sentences, punchy, quotable, no stage directions inside the line. Each line must be funny on its own as a subtitle.

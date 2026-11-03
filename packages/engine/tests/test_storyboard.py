@@ -24,7 +24,7 @@ def test_template_shape_matches_the_contract():
     cast_ids = {c["id"] for c in sb["cast"]}
     assert {"anchor", "operative", "analyst"} <= cast_ids
     for c in sb["cast"]:
-        assert set(c) == {"id", "name", "role", "look", "voice"}
+        assert {"id", "name", "role", "look", "voice"} <= set(c) <= {"id", "name", "role", "look", "voice", "trait", "poses"}
     ids = set()
     for sc in sb["scenes"]:
         assert sc["act"] in S.ACTS
@@ -129,7 +129,7 @@ def test_strip_html():
 # -- the cast file (<media>/cast.json) ------------------------------------------------------------
 
 CAST_DOC = {"cast": [
-    {"id": "anchor", "name": "SHION", "role": "the Anchor", "look": "adult woman, mid-20s, long silver hair, thin glasses",
+    {"id": "anchor", "name": "SHION", "role": "the Anchor", "look": "adult woman, mid-20s, long lavender hair, thin glasses",
      "trait": "perfectly composed", "voice": "21m00Tcm4TlvDq8ikWAM",
      "poses": {"talk": {"id": "upper80v2_P019", "phrase": "tucks a strand of hair behind her ear", "ref_image": "/nope.png"},
                "still": "rests her chin on both palms"}},
@@ -156,24 +156,37 @@ def test_cast_file_replaces_the_builtin_cast():
     sb = S.build("Mayor bans Mondays", minutes=2)              # 9 scenes: every template act, every speaker
     assert [c["name"] for c in sb["cast"]] == ["SHION", "HINA", "DR. RENA"]
     prompts = " ".join(s["prompt"] + s.get("line", "") for sc in sb["scenes"] for s in sc["shots"])
-    assert "SHION" in prompts and "Hina here." in prompts and "KUROGANE" not in prompts
+    assert "SHION" in prompts and "Hina here." in prompts
     block = S._cast_block(S.default_cast())
     assert "talk shot: she tucks a strand of hair behind her ear" in block and "perfectly composed" in block
 
 
+def test_default_cast_is_the_shion_hina_rena_trio():
+    cast = {c["id"]: c for c in S.default_cast()}      # no cast file in the test media dir
+    assert list(cast) == ["anchor", "operative", "analyst"]
+    assert [c["name"] for c in cast.values()] == ["SHION", "HINA", "DR. RENA"]
+    assert [c["voice"] for c in cast.values()] == ["EXAVITQu4vr4xnSDxMaL", "FGY2WhTYpPnrIDTdsKH5", "pFZP5JQG7iQjIQuC4Bku"]
+    assert all(c["trait"] and set(c["poses"]) == {"talk", "action", "still"} for c in cast.values())
+    assert S.DEFAULT_VOICES["anchor"] == cast["anchor"]["voice"]
+    assert "crimson" in cast["anchor"]["look"] and "fuzzy" in cast["operative"]["look"]
+    sb = S.build("Mayor bans Mondays", minutes=1)
+    assert [c["name"] for c in sb["cast"]] == ["SHION", "HINA", "DR. RENA"]
+
+
 def test_broken_cast_file_falls_back_to_the_builtin_cast():
     _write_cast({"cast": CAST_DOC["cast"][:2]})            # no analyst
-    assert [c["name"] for c in S.default_cast()] == ["KUROGANE", "VEX", "DR. HAKASE"]
+    assert [c["name"] for c in S.default_cast()] == ["SHION", "HINA", "DR. RENA"]
     _write_cast("not a cast")
     assert S.default_cast() == S.builtin_cast()
 
 
 def test_style_sheet_prompt_follows_the_cast_file_anchor():
     media = Path(os.environ["ANIME_NEWS_MEDIA"])
-    assert style.sheet_prompt(media) == style.SHEET_PROMPT and "silver crew cut" in style.SHEET_PROMPT
+    assert style.sheet_prompt(media) == style.SHEET_PROMPT and "crimson-red hair" in style.SHEET_PROMPT
+    assert "middle-aged" not in style.SHEET_PROMPT and "crew cut" not in style.SHEET_PROMPT
     _write_cast(CAST_DOC)
     p = style.sheet_prompt(media)
-    assert "SHION" in p and "long silver hair, thin glasses" in p and "crew cut" not in p
+    assert "SHION" in p and "long lavender hair, thin glasses" in p and "crew cut" not in p
 
 
 def test_styled_frame_sends_the_pose_drawing_as_a_second_reference(tmp_path):

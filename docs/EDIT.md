@@ -76,12 +76,18 @@ with `"at": null` plays on every storyboard scene change and on the end card.
    The cut falls only on a real pause in the take's sound (ffmpeg silencedetect, -32 dB for 0.12 s) that lies within
    0.5 s of a clause boundary (placed by word count) and at least 2 s from the cut-away end; a take with no such pause,
    or no sound, holds whole. A J-cut's voice starts on a cut of the previous run,
-   and no cut falls in a line's first 0.8 s. The take's sound always plays whole.
+   and no cut falls in a line's first 0.8 s. The take's sound always plays whole. The same holds for narration: a line
+   whose opening picture cannot last 0.8 s past its start starts on the next picture instead, and the final pass
+   (rule 8) holds the last frame of whatever picture is under a line's start until 0.8 s into it.
 8. **Lines are never cut off (R13).** A scene's narration plays in full over its first run of pictures; the run
    grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s. When
    that is still too short, the run's last still holds as long as it takes, or, with no still, its last shot holds its
-   last frame (`extra.freeze`), until the line ends plus 0.2 s. A voice is never trimmed: `voice` `played` always
-   equals `file_dur`. Free-standing `narration` lines also play in full.
+   last frame (`extra.freeze`), until the line ends plus 0.2 s. A scene of talk takes only plays its narration after
+   its last take, on that take's held last frame. Then a final pass (`_settle`) checks every narration line however
+   it was placed (scene narration, free-standing `narration` entries at a scene, at a time or at 0.15 s): a line
+   ends 0.2 s before the next line that can move and before its scene ends, else the picture before that point
+   grows (a still holds, a clip holds its last frame) and the layout is redone. The audio graph plays each line
+   whole, with no trim or fade: `voice` `played` always equals `file_dur`.
 9. **Sharpness gate.** For every candidate window, the first, middle and last frames are scored (Laplacian
    variance of the 160x90 grayscale frame, pure Python). A window must reach 40 % of its angle's median (10
    samples; each angle is its own shot, so a soft close-up is not judged against a sharp wide) and never less than

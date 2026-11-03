@@ -144,13 +144,17 @@ export default function Home() {
           </ol>
         </div>
         <aside className="panel brackets self-start p-6 lg:col-span-5 lg:mt-24">
-          <p className="kicker">Your key stays on your machine</p>
+          <p className="kicker">Local mode keeps everything on your machine</p>
           <p className="mt-4 text-white/85">
             The Studio talks to the engine on your own computer. Your Comfy API key is kept in your browser and in{" "}
             <code className="font-mono text-[13px] text-gold-pale">~/.anime-news/config.json</code>, and your storyboards and videos stay in{" "}
             <code className="font-mono text-[13px] text-gold-pale">~/.anime-news/</code>.
           </p>
-          <p className="mt-3 text-white/60">This website never receives your key, your scripts or your renders.</p>
+          <p className="mt-3 text-white/60">
+            In local mode nothing reaches this website: not your key, your scripts or your renders. In the shared demo mode, your headline,
+            storyboard and the rendered video pass through this site&apos;s server to the shared engine, and the site stores none of it. Your own
+            Comfy key is never asked for in that mode.
+          </p>
         </aside>
       </section>
 

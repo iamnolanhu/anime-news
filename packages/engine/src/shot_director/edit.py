@@ -53,6 +53,7 @@ SHARP_GATE = 0.4           # skip clip windows whose sharpness < 40 % of the ang
 SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
 SCENE_CUT = 0.25           # ffmpeg scene score of a clip's internal hard cut (a Seedance "Hard cut to:" second angle)
 SCENE_SPIKE = 0.20         # ... or a score spike this high, 1.6x the frame before it
+SCENE_ISOLATED = 0.15      # ... or an isolated spike this high between calm frames (<= 0.02 before, <= 0.05 after)
 ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never shown
 MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
 COUNTDOWN_RED = "0xFF2A2A"
@@ -209,22 +210,30 @@ def source(path: str) -> Source:
     return _SOURCES[path]
 
 
+def scene_cut(prev: float, score: float, nxt: float) -> bool:
+    """Is a frame with this ffmpeg scene score (between the frames before and after it) a hard cut? Over SCENE_CUT;
+    or a spike of at least SCENE_SPIKE that is 1.6x the frame before it; or an isolated spike of at least
+    SCENE_ISOLATED between calm frames: a cut between two similar pictures scores low but stands alone (EP3's
+    cans-to-clock cut: 0.182 after 0.000; EP1's intern close-up: 0.154 after 0.012), while a camera move ramps and
+    animation on twos re-poses at 0.10-0.12."""
+    return score > SCENE_CUT or (score >= SCENE_SPIKE and score >= 1.6 * prev) or \
+        (score >= SCENE_ISOLATED and prev <= 0.02 and nxt <= 0.05)
+
+
 def detect_cuts(path: str, dur: float) -> list[tuple[float, float]]:
-    """Internal hard cuts of a clip, from ffmpeg's per-frame scene score: a frame scoring over SCENE_CUT, or a spike
-    of at least SCENE_SPIKE that is 1.6x the frame before it (the PsyopAnime cut log's rule; it catches a cut that
-    scores 0.246 after a still frame, and a camera move's ramp of 0.1-0.2 is not one). The first and last 0.2 s
-    are ignored (encoder artefacts); changes closer than 0.3 s are one cut zone (first, last)."""
+    """Internal hard cuts of a clip, from ffmpeg's per-frame scene score (scene_cut decides each frame, after the
+    PsyopAnime cut log's spike rules). The first and last 0.2 s are ignored (encoder artefacts); changes closer than
+    0.3 s are one cut zone (first, last)."""
     p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vf",
                         "select='gte(scene,0)',metadata=print:key=lavfi.scene_score", "-an", "-f", "null", "-"],
                        capture_output=True, text=True)
     ts = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", p.stderr)]
     scores = [float(x) for x in re.findall(r"lavfi\.scene_score=([0-9.]+)", p.stderr)]
     zones: list[list[float]] = []
-    prev = 0.0
-    for t, v in zip(ts, scores):
-        cut = v > SCENE_CUT or (v >= SCENE_SPIKE and v >= 1.6 * prev)
-        prev = v
-        if not cut or t < 0.2 or t > dur - 0.2:
+    for i, (t, v) in enumerate(zip(ts, scores)):
+        prev = scores[i - 1] if i else 0.0
+        nxt = scores[i + 1] if i + 1 < len(scores) else 0.0
+        if not scene_cut(prev, v, nxt) or t < 0.2 or t > dur - 0.2:
             continue
         if zones and t - zones[-1][1] < 0.3:
             zones[-1][1] = t

@@ -1,0 +1,825 @@
+{
+ "series": "THE WEEKLY BRIEFING",
+ "updated": "2026-11-03T16:29:46+00:00",
+ "weeks": [
+  {
+   "week": "2026-W44",
+   "start": "2026-10-26",
+   "end": "2026-11-01",
+   "label": "OCT 26 - NOV 1",
+   "title": "WEEK 44: OCT 26 - NOV 1",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Canada's government invests $1.6bn in AI company Cohere"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Binance confirms assets worth $6.3bn were stolen"
+    },
+    {
+     "topic": "politics",
+     "headline": "Bulgarians vote in the second round of presidential"
+    },
+    {
+     "topic": "tech",
+     "headline": "Teghaza 001 is reported to be 4.1bn years old"
+    },
+    {
+     "topic": "markets",
+     "headline": "Jio Platforms raises $3.2bn in India's largest-ever IPO"
+    }
+   ],
+   "duration": 106.667,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W44/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W44/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W44/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W44/meta.json",
+   "updated": "2026-11-03T13:52:31+00:00"
+  },
+  {
+   "week": "2026-W43",
+   "start": "2026-10-19",
+   "end": "2026-10-25",
+   "label": "OCT 19-25",
+   "title": "WEEK 43: OCT 19-25",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Crypto capture of foreign aid"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Crypto exchanges race to offer prediction markets"
+    },
+    {
+     "topic": "politics",
+     "headline": "Bulgarians vote in the first round of the presidential"
+    },
+    {
+     "topic": "tech",
+     "headline": "JAXA launches the Martian Moons eXploration spacecraft"
+    },
+    {
+     "topic": "markets",
+     "headline": "A district judge in New Mexico, US, orders Meta to pay $25bn"
+    }
+   ],
+   "duration": 102.167,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W43/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W43/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W43/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W43/meta.json",
+   "updated": "2026-11-03T14:25:11+00:00"
+  },
+  {
+   "week": "2026-W42",
+   "start": "2026-10-12",
+   "end": "2026-10-18",
+   "label": "OCT 12-18",
+   "title": "WEEK 42: OCT 12-18",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "FSB finalises sound practices for the responsible adoption"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Deutsche Bank prepares crypto custody launch, targets Asia"
+    },
+    {
+     "topic": "politics",
+     "headline": "Opposition parties win 22 of the contested 27 seats"
+    },
+    {
+     "topic": "tech",
+     "headline": "At the General Conference on Weights and Measures"
+    },
+    {
+     "topic": "markets",
+     "headline": "The New Yalu River Bridge connecting Dandong, China"
+    }
+   ],
+   "duration": 108.542,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W42/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W42/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W42/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W42/meta.json",
+   "updated": "2026-11-03T14:59:11+00:00"
+  },
+  {
+   "week": "2026-W41",
+   "start": "2026-10-05",
+   "end": "2026-10-11",
+   "label": "OCT 5-11",
+   "title": "WEEK 41: OCT 5-11",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "The Taiwanese finance ministry reports exports reached"
+    },
+    {
+     "topic": "crypto",
+     "headline": "CFTC Launches Crypto Market Structure Rulemaking"
+    },
+    {
+     "topic": "politics",
+     "headline": "Czechs begin voting in the first round to elect one-third"
+    },
+    {
+     "topic": "tech",
+     "headline": "The Seychelles Islands Foundation and University of Exeter"
+    },
+    {
+     "topic": "markets",
+     "headline": "The merger between American media conglomerates Paramount"
+    }
+   ],
+   "duration": 101.917,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W41/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W41/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W41/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W41/meta.json",
+   "updated": "2026-11-03T15:35:58+00:00"
+  },
+  {
+   "week": "2026-W40",
+   "start": "2026-09-28",
+   "end": "2026-10-04",
+   "label": "SEP 28 - OCT 4",
+   "title": "WEEK 40: SEP 28 - OCT 4",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "The Tokyo District Court rules that a person's voice can"
+    },
+    {
+     "topic": "crypto",
+     "headline": "LA Kings To Unveil New Hall of Fame Display at Crypto.com"
+    },
+    {
+     "topic": "politics",
+     "headline": "Romania's parliament rejects PM-designate Siegfried"
+    },
+    {
+     "topic": "tech",
+     "headline": "SpaceX's Starship Flight 14 launches into orbit"
+    },
+    {
+     "topic": "markets",
+     "headline": "A US federal judge approves media conglomerate Paramount"
+    }
+   ],
+   "duration": 99.458,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W40/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W40/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W40/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W40/meta.json",
+   "updated": "2026-11-03T16:05:53+00:00"
+  },
+  {
+   "week": "2026-W39",
+   "start": "2026-09-21",
+   "end": "2026-09-27",
+   "label": "SEP 21-27",
+   "title": "WEEK 39: SEP 21-27",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Australian PM Anthony Albanese says an OpenAI-deployed agent"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Crypto Brief"
+    },
+    {
+     "topic": "politics",
+     "headline": "Serbian president Aleksandar Vučić resigns in order to run"
+    },
+    {
+     "topic": "tech",
+     "headline": "Hundreds of flights are delayed at five primary airports"
+    },
+    {
+     "topic": "markets",
+     "headline": "Turkish family minister Fatma Betül Sayan Kaya resigns"
+    }
+   ],
+   "duration": 19.542,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W39/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W39/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W39/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W39/meta.json",
+   "updated": "2026-11-03T16:26:19+00:00"
+  },
+  {
+   "week": "2026-W33",
+   "start": "2026-08-10",
+   "end": "2026-08-16",
+   "label": "AUG 10-16",
+   "title": "WEEK 33: AUG 10-16",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Artificial Intelligence, 1588"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Moonberg Presale Launch Soon: Is $MBX the Best Crypto"
+    },
+    {
+     "topic": "politics",
+     "headline": "Cook Islanders vote to elect all 24 seats of Parliament"
+    },
+    {
+     "topic": "tech",
+     "headline": "Astronomers studying a little red dot found by the James"
+    },
+    {
+     "topic": "markets",
+     "headline": "The Central African Republic inaugurates a 50-megawatt"
+    }
+   ],
+   "duration": 103.417,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W33/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W33/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W33/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W33/meta.json",
+   "updated": "2026-11-03T13:53:49+00:00"
+  },
+  {
+   "week": "2026-W32",
+   "start": "2026-08-03",
+   "end": "2026-08-09",
+   "label": "AUG 3-9",
+   "title": "WEEK 32: AUG 3-9",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "City Colleges of Chicago Launches its First AI Degree"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Moonberg Presale Launch Soon: Is $MBX the Best Crypto"
+    },
+    {
+     "topic": "politics",
+     "headline": "The governments of Mexico and Peru reinstate diplomatic"
+    },
+    {
+     "topic": "tech",
+     "headline": "The spent upper stage of a SpaceX Falcon 9 rocket collided"
+    },
+    {
+     "topic": "markets",
+     "headline": "The Competition and Markets Authority of the UK clears"
+    }
+   ],
+   "duration": 107.708,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W32/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W32/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W32/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W32/meta.json",
+   "updated": "2026-11-03T14:31:13+00:00"
+  },
+  {
+   "week": "2026-W31",
+   "start": "2026-07-27",
+   "end": "2026-08-02",
+   "label": "JUL 27 - AUG 2",
+   "title": "WEEK 31: JUL 27 - AUG 2",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "South Korea's KOSPI index rises by 18% amid a surge"
+    },
+    {
+     "topic": "crypto",
+     "headline": "South Africa issues draft rules for cross-border crypto"
+    },
+    {
+     "topic": "politics",
+     "headline": "Victorian premier Jacinta Allan resigns, triggering"
+    },
+    {
+     "topic": "tech",
+     "headline": "Taiwanese prosecutors detain an Nvidia employee"
+    },
+    {
+     "topic": "markets",
+     "headline": "UEFA announces it will boycott the 2030 FIFA World Cup"
+    }
+   ],
+   "duration": 97.083,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W31/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W31/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W31/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W31/meta.json",
+   "updated": "2026-11-03T15:05:16+00:00"
+  },
+  {
+   "week": "2026-W30",
+   "start": "2026-07-20",
+   "end": "2026-07-26",
+   "label": "JUL 20-26",
+   "title": "WEEK 30: JUL 20-26",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Artificial Intelligence and Extremist Capability: How AI"
+    },
+    {
+     "topic": "crypto",
+     "headline": "What’s the Next Big Crypto Narrative After AI Tokens? Top"
+    },
+    {
+     "topic": "politics",
+     "headline": "Sir Keir Starmer resigns as Prime Minister of the UK"
+    },
+    {
+     "topic": "tech",
+     "headline": "The SpaceX Starship test flight 13 successfully lands"
+    },
+    {
+     "topic": "markets",
+     "headline": "Paramount announces they have agreed to delay its $111bn"
+    }
+   ],
+   "duration": 105.833,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W30/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W30/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W30/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W30/meta.json",
+   "updated": "2026-11-03T15:45:47+00:00"
+  },
+  {
+   "week": "2026-W29",
+   "start": "2026-07-13",
+   "end": "2026-07-19",
+   "label": "JUL 13-19",
+   "title": "WEEK 29: JUL 13-19",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Mathematician and Anthropic employee Levent Alpöge presents"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Do You Even Crypto, Bro? Crypto in Household Finance"
+    },
+    {
+     "topic": "politics",
+     "headline": "Andy Burnham is elected as the new leader of the British"
+    },
+    {
+     "topic": "tech",
+     "headline": "Amazon partners with South African internet provider Herotel"
+    },
+    {
+     "topic": "markets",
+     "headline": "TotalEnergies and its partners inaugurate the 216 MW Hydra"
+    }
+   ],
+   "duration": 59.25,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W29/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W29/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W29/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W29/meta.json",
+   "updated": "2026-11-03T16:29:14+00:00"
+  },
+  {
+   "week": "2026-W22",
+   "start": "2026-05-25",
+   "end": "2026-05-31",
+   "label": "MAY 25-31",
+   "title": "WEEK 22: MAY 25-31",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Artificial Intelligence for Manufacturing Workshop"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Crypto treasuries turn to risky equity in drive"
+    },
+    {
+     "topic": "politics",
+     "headline": "The Latvian Saeima approves a four-party coalition"
+    },
+    {
+     "topic": "tech",
+     "headline": "How to operationalize a strong cyber-resilience plan"
+    },
+    {
+     "topic": "markets",
+     "headline": "Uzbekistan resumes the export of gold in April"
+    }
+   ],
+   "duration": 96.292,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W22/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W22/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W22/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W22/meta.json",
+   "updated": "2026-11-03T13:55:33+00:00"
+  },
+  {
+   "week": "2026-W21",
+   "start": "2026-05-18",
+   "end": "2026-05-24",
+   "label": "MAY 18-24",
+   "title": "WEEK 21: MAY 18-24",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "DeepSeek targets general intelligence development"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Crypto industry braces for quantum computing threat"
+    },
+    {
+     "topic": "politics",
+     "headline": "Slovenia elects Democratic Party leader Janez Janša as PM"
+    },
+    {
+     "topic": "tech",
+     "headline": "Google rebuilds search engine in the age of AI"
+    },
+    {
+     "topic": "markets",
+     "headline": "Mexico and the EU sign an updated trade agreement"
+    }
+   ],
+   "duration": 110.292,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W21/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W21/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W21/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W21/meta.json",
+   "updated": "2026-11-03T14:30:17+00:00"
+  },
+  {
+   "week": "2026-W20",
+   "start": "2026-05-11",
+   "end": "2026-05-17",
+   "label": "MAY 11-17",
+   "title": "WEEK 20: MAY 11-17",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Pope approves creation of Interdicasterial Commission"
+    },
+    {
+     "topic": "crypto",
+     "headline": "US Senate committee advances crypto bill in milestone"
+    },
+    {
+     "topic": "politics",
+     "headline": "British PM Keir Starmer tells his cabinet he has 'no"
+    },
+    {
+     "topic": "tech",
+     "headline": "Researchers from Thailand publish the discovery"
+    },
+    {
+     "topic": "markets",
+     "headline": "Korean Air plans to launch an integrated flag carrier"
+    }
+   ],
+   "duration": 106.708,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W20/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W20/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W20/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W20/meta.json",
+   "updated": "2026-11-03T15:04:07+00:00"
+  },
+  {
+   "week": "2026-W19",
+   "start": "2026-05-04",
+   "end": "2026-05-10",
+   "label": "MAY 4-10",
+   "title": "WEEK 19: MAY 4-10",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Generative AI ethics: 16 biggest concerns and risks"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Europe Crypto Tax Guide 2026: EU Rules, Tax Reporting &"
+    },
+    {
+     "topic": "politics",
+     "headline": "Voters in England elect six mayors and 5,066 council seats"
+    },
+    {
+     "topic": "tech",
+     "headline": "The US Department of Defense begins releasing classified"
+    },
+    {
+     "topic": "markets",
+     "headline": "As a result of the motion of no confidence against Romanian"
+    }
+   ],
+   "duration": 99.792,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W19/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W19/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W19/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W19/meta.json",
+   "updated": "2026-11-03T15:45:17+00:00"
+  },
+  {
+   "week": "2026-W18",
+   "start": "2026-04-27",
+   "end": "2026-05-03",
+   "label": "APR 27 - MAY 3",
+   "title": "WEEK 18: APR 27 - MAY 3",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "Alphabet Inc. announces a $40bn investment into AI company"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Police in Dubai, United Arab Emirates, arrest 276"
+    },
+    {
+     "topic": "politics",
+     "headline": "The U.S"
+    },
+    {
+     "topic": "tech",
+     "headline": "On World Press Freedom Day, Afghan journalists launch"
+    },
+    {
+     "topic": "markets",
+     "headline": "Finnish elevator manufacturer Kone announces the acquisition"
+    }
+   ],
+   "duration": 88.75,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W18/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W18/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W18/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W18/meta.json",
+   "updated": "2026-11-03T16:29:24+00:00"
+  },
+  {
+   "week": "2026-W10",
+   "start": "2026-03-02",
+   "end": "2026-03-08",
+   "label": "MAR 2-8",
+   "title": "WEEK 10: MAR 2-8",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "AI agent in healthcare: applications and future directions |"
+    },
+    {
+     "topic": "crypto",
+     "headline": "US and Britain split over crypto collaboration, sources say"
+    },
+    {
+     "topic": "politics",
+     "headline": "Kosovan president Vjosa Osmani dissolves the Kuvendi"
+    },
+    {
+     "topic": "tech",
+     "headline": "The KAIROS rocket developed by private spaceflight company"
+    },
+    {
+     "topic": "markets",
+     "headline": "Around 24 U.S. states file a lawsuit against the Trump"
+    }
+   ],
+   "duration": 73.875,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W10/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W10/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W10/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W10/meta.json",
+   "updated": "2026-11-03T13:55:19+00:00"
+  },
+  {
+   "week": "2026-W09",
+   "start": "2026-02-23",
+   "end": "2026-03-01",
+   "label": "FEB 23 - MAR 1",
+   "title": "WEEK 9: FEB 23 - MAR 1",
+   "status": "partial",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "OpenAI announces it has reached an agreement with the U.S"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Massachusetts sues Bitcoin Depot, alleging the crypto ATM"
+    },
+    {
+     "topic": "politics",
+     "headline": "Rob Jetten is sworn in as the new PM of the Netherlands"
+    },
+    {
+     "topic": "tech",
+     "headline": "Meta agrees to purchase millions of AI chips from AMD"
+    },
+    {
+     "topic": "markets",
+     "headline": "South Korea's benchmark KOSPI index surpasses 6,000 points"
+    }
+   ],
+   "duration": 100.375,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W09/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W09/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W09/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W09/meta.json",
+   "updated": "2026-11-03T14:29:17+00:00"
+  },
+  {
+   "week": "2026-W08",
+   "start": "2026-02-16",
+   "end": "2026-02-22",
+   "label": "FEB 16-22",
+   "title": "WEEK 8: FEB 16-22",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "When Artificial Intelligence Discriminates: Employer"
+    },
+    {
+     "topic": "crypto",
+     "headline": "As crypto industry expands, US slashes office examining"
+    },
+    {
+     "topic": "politics",
+     "headline": "The Florida Legislature, in the US, passes a measure"
+    },
+    {
+     "topic": "tech",
+     "headline": "An annular solar eclipse lasting 2 minutes and 20 seconds"
+    },
+    {
+     "topic": "markets",
+     "headline": "American e-commerce company eBay announces it will acquire"
+    }
+   ],
+   "duration": 100.208,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W08/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W08/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W08/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W08/meta.json",
+   "updated": "2026-11-03T15:04:38+00:00"
+  },
+  {
+   "week": "2026-W07",
+   "start": "2026-02-09",
+   "end": "2026-02-15",
+   "label": "FEB 9-15",
+   "title": "WEEK 7: FEB 9-15",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "OpenAI removes GPT-4o from ChatGPT"
+    },
+    {
+     "topic": "crypto",
+     "headline": "South Korea crypto exchange Bithumb says system flaws led"
+    },
+    {
+     "topic": "politics",
+     "headline": "Zimbabwean president Emmerson Mnangagwa's cabinet approves"
+    },
+    {
+     "topic": "tech",
+     "headline": "The Russian Roskomnadzor restricts access to the instant"
+    },
+    {
+     "topic": "markets",
+     "headline": "The Inter-American Development Bank announces it"
+    }
+   ],
+   "duration": 111.0,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W07/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W07/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W07/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W07/meta.json",
+   "updated": "2026-11-03T15:44:51+00:00"
+  },
+  {
+   "week": "2026-W06",
+   "start": "2026-02-02",
+   "end": "2026-02-08",
+   "label": "FEB 2-8",
+   "title": "WEEK 6: FEB 2-8",
+   "status": "done",
+   "published": false,
+   "headlines": [
+    {
+     "topic": "ai",
+     "headline": "The UK's Ofcom announces it is continuing its investigation"
+    },
+    {
+     "topic": "crypto",
+     "headline": "Crypto and Blockchain Venture Capital – Q4 2025"
+    },
+    {
+     "topic": "politics",
+     "headline": "Thai citizens vote to elect all 500 seats in the House"
+    },
+    {
+     "topic": "tech",
+     "headline": "SpaceX deactivates Starlink terminals in Russian-occupied"
+    },
+    {
+     "topic": "markets",
+     "headline": "Saudi Arabia and Syria sign agreements covering a joint"
+    }
+   ],
+   "duration": 60.25,
+   "minutes": 1.0,
+   "quality": "720p",
+   "mp4_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W06/episode.mp4",
+   "vertical_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W06/episode.9x16.mp4",
+   "poster_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W06/poster.jpg",
+   "meta_url": "https://ss-app-media.nyc3.digitaloceanspaces.com/anime-news/weekly/2026-W06/meta.json",
+   "updated": "2026-11-03T16:28:40+00:00"
+  }
+ ]
+}

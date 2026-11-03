@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { EpisodeCard } from "@/components/episode-card";
+import { WeeklyGallery } from "@/components/weekly/weekly-gallery";
 import { episodes } from "@/lib/episodes";
 
 export const metadata: Metadata = {
@@ -19,7 +20,17 @@ export default function EpisodesPage() {
           <Link href="/studio" className="link-cyan">Make your own</Link>.
         </p>
       </div>
-      <div className="mt-10 space-y-14">
+      <section aria-labelledby="weekly" className="mt-12">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <h2 id="weekly" className="display text-[clamp(2rem,4vw,3rem)]">Weekly briefings</h2>
+          <Link href="/weekly" className="link-cyan font-mono text-[12px] uppercase tracking-[0.14em]">Open the weekly page</Link>
+        </div>
+        <div className="mt-6">
+          <WeeklyGallery limit={3} />
+        </div>
+      </section>
+      <h2 className="display mt-20 text-[clamp(2rem,4vw,3rem)]">Specials</h2>
+      <div className="mt-6 space-y-14">
         {episodes.map((e, i) => (
           <EpisodeCard key={e.slug} episode={e} index={episodes.length - i} />
         ))}

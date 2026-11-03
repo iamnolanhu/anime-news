@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 
 /** This week's episode, playing muted on loop. A click (or Enter/Space) turns the sound on and restarts it. */
-export function HeroPlayer({ src, poster, title }: { src: string; poster: string; title: string }) {
+export function HeroPlayer({ src, poster, title }: { src: string; poster?: string; title: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(true);
 

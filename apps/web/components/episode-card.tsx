@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PosterPlayer } from "@/components/poster-player";
 import { formatDuration, weekHeading, type Episode } from "@/lib/episodes";
 
 /** One finished episode: player with a 16:9 / 9:16 toggle, the numbers, and a download of the format on screen. */
@@ -50,15 +51,7 @@ export function EpisodeCard({ episode, index }: { episode: Episode; index: numbe
       </div>
       <div className="min-w-0 lg:col-span-8">
         <div className={`panel brackets mx-auto p-2 ${vertical ? "max-w-[360px]" : ""}`}>
-          <video
-            key={src}
-            src={src}
-            poster={poster}
-            controls
-            playsInline
-            preload="metadata"
-            className={`block w-full bg-black ${vertical ? "aspect-[9/16]" : "aspect-video"}`}
-          />
+          <PosterPlayer src={src} poster={poster} vertical={vertical} label={episode.title} />
         </div>
       </div>
     </article>

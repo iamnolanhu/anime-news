@@ -1,7 +1,8 @@
 """FastAPI app: the local Anime News engine. One process serves the API, the static UI and the generated media.
 
 Contract (shared with apps/web): GET /api/health, GET|PUT /api/config, POST /api/storyboard, POST /api/render
-(202 + background job), GET|DELETE /api/jobs/{id}, GET /api/episodes, GET /media/{file}. CORS: an origin
+(202 + background job), GET|DELETE /api/jobs/{id}, GET /api/episodes, GET /api/weekly, GET /media/{file}
+(including /media/weekly/<week>/<file>). CORS: an origin
 allowlist (ANIME_NEWS_ALLOWED_ORIGINS) and Access-Control-Allow-Private-Network on every preflight, so the
 hosted web app can drive the engine on the user's own machine. The Comfy API key is stored in
 ~/.anime-news/config.json and never returned, logged or echoed.
@@ -481,6 +482,13 @@ def create_app(media: Path | None = None) -> FastAPI:
             if charged:
                 usage.refund(*charged)
         return {"cancelled": True}
+
+    @app.get("/api/weekly")
+    def list_weekly() -> dict:
+        """THE WEEKLY BRIEFING manifest (<media>/weekly/index.json), newest week first. Shape: docs/WEEKLY.md.
+        File URLs are engine-relative (/media/weekly/<week>/<file>); the /media mount serves them."""
+        from . import weekly
+        return weekly.read_manifest(media)
 
     @app.get("/api/episodes")
     def list_episodes(request: Request) -> dict:

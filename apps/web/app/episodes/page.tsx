@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default function EpisodesPage() {
   return (
     <div className="mx-auto max-w-[1240px] px-4 pt-10 sm:px-6 lg:pt-16">
-      <p className="kicker">The Hourly Briefing</p>
+      <p className="kicker">The Weekly Briefing</p>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
         <h1 className="display text-[clamp(3rem,8vw,6rem)]">Episodes</h1>
         <p className="meta max-w-md pb-2">

@@ -5,6 +5,8 @@
   anime-news render <storyboard.json> [--quality 480p|720p] [--vertical] [--out DIR] [--mock]
   anime-news render --retry <episode>.shots.json [--out DIR]                        re-renders failed shots only
   anime-news make "<headline>" [--text T | --url U] [--minutes 1] [--quality 480p] [--vertical] [--out DIR] [--mock]
+  anime-news weekly --week 2026-W44 | --weeks 2026-W01..2026-W44 [--minutes 1] [--quality 480p] [--out DIR] [--mock]
+                    [--plan-only] [--retry] [--budget-usd 100] [--publish]                THE WEEKLY BRIEFING (docs/WEEKLY.md)
 
 The Comfy API key comes from COMFY_API_KEY or ~/.anime-news/config.json (`anime-news serve` + the UI's key
 field writes it). No key, or --mock: an offline placeholder render that spends nothing.
@@ -127,6 +129,31 @@ def cmd_make(args) -> None:
     _render(args, sb, media)
 
 
+def cmd_weekly(args) -> None:
+    _mock(args)
+    from . import config, weekly
+    media = _media(args)
+    media.mkdir(parents=True, exist_ok=True)
+    try:
+        weeks = weekly.week_range(args.weeks or args.week)
+    except ValueError as e:
+        print(f"weekly: {e}", file=sys.stderr)
+        sys.exit(2)
+    router = None
+    if not args.plan_only:
+        from .router_client import make_router
+        router = make_router(media, args.quality)
+        print(f"[anime-news] weekly {router.mode}: {len(weeks)} week(s) into {media / 'weekly'}, "
+              f"budget ${args.budget_usd:.2f}", file=sys.stderr, flush=True)
+    result = weekly.run(weeks, media, router, minutes=args.minutes, quality=args.quality, plan_only=args.plan_only,
+                        retry=args.retry, budget_usd=args.budget_usd, force=args.force, do_publish=args.publish,
+                        refresh=args.refresh_sources, use_google=not args.no_google,
+                        use_viral=not (args.no_viral or args.mock or config.mock_forced()), allow_unfinished=args.allow_unfinished)
+    print(json.dumps(result, indent=1))
+    if any(w["status"] == "failed" for w in result["weeks"]):
+        sys.exit(1)
+
+
 def _render_opts(p: argparse.ArgumentParser) -> None:
     from .render_storyboard import QUALITIES, SHOT_PARALLEL
     p.add_argument("--quality", choices=QUALITIES, default="480p", help="Seedance resolution (default 480p)")
@@ -173,6 +200,28 @@ def main(argv: list[str] | None = None) -> None:
     _story_opts(p)
     _render_opts(p)
     p.set_defaults(fn=cmd_make)
+    p = sub.add_parser("weekly", help="THE WEEKLY BRIEFING: a week's five headlines in, one episode out (batch backfill)")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--week", help="one ISO week, e.g. 2026-W44")
+    g.add_argument("--weeks", help="a range A..B, e.g. 2026-W01..2026-W44, run one at a time in that order")
+    p.add_argument("--minutes", type=float, default=1.0, help="episode length (default 1, about 20 shots; 3 for the top weeks)")
+    from .render_storyboard import QUALITIES
+    p.add_argument("--quality", choices=QUALITIES, default="480p", help="Seedance resolution (default 480p)")
+    p.add_argument("--out", help="media dir (default ~/.anime-news/media); weeks go to <out>/weekly/<week>/")
+    p.add_argument("--mock", action="store_true", help="offline placeholder render and template storyboard, no Router calls")
+    p.add_argument("--plan-only", action="store_true",
+                   help="fetch the sources, write the storyboard, print the five headlines and the spend estimate; "
+                        "renders nothing and never calls the writer")
+    p.add_argument("--retry", action="store_true", help="re-render only the failed shots of partial weeks, then re-cut")
+    p.add_argument("--budget-usd", type=float, default=100.0,
+                   help="stop before a week whose estimate would take the batch's live spend over this (default 100)")
+    p.add_argument("--publish", action="store_true", help="mark the rendered weeks as published in the manifest")
+    p.add_argument("--force", action="store_true", help="re-render weeks that are already done")
+    p.add_argument("--refresh-sources", action="store_true", help="refetch Wikipedia even when the week is cached")
+    p.add_argument("--no-google", action="store_true", help="never use Google News to fill a topic Wikipedia left empty")
+    p.add_argument("--no-viral", action="store_true", help="skip the last30days engagement boost for recent weeks")
+    p.add_argument("--allow-unfinished", action="store_true", help="also plan or render a week that is not over yet")
+    p.set_defaults(fn=cmd_weekly)
     args = ap.parse_args(argv)
     args.fn(args)
 

@@ -204,7 +204,7 @@ Change tokens only, in `:root` at the top of `theme.css`:
 ## Brand: Anime News
 
 The product is **Anime News** (wordmark `ANIME NEWS`, public URL = the Vercel site). The show
-inside it keeps its own series title, `THE HOURLY BRIEFING`, on each episode's cold open. Shot Director
+inside it keeps its own series title, `THE WEEKLY BRIEFING`, on each episode's cold open. Shot Director
 is the former working name of the engine: package, CLI entry points, routes and `SHOT_DIRECTOR_*`
 variables keep it. PostHog still tags events `app: shot-director` so analytics stay continuous across
 the rename; change it only together with the PostHog dashboards.

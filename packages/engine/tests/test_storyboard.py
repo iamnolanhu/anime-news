@@ -14,7 +14,7 @@ def test_template_shape_matches_the_contract():
     sb = S.build("Mayor bans Mondays", text="The council voted 7-2.", minutes=1)
     for k in ("id", "headline", "source_text_excerpt", "series", "logline", "minutes", "cast", "scenes"):
         assert k in sb
-    assert sb["series"] == "THE HOURLY BRIEFING"
+    assert sb["series"] == "THE WEEKLY BRIEFING"
     assert sb["source_text_excerpt"].startswith("The council")
     cast_ids = {c["id"] for c in sb["cast"]}
     assert {"anchor", "operative", "analyst"} <= cast_ids
@@ -35,7 +35,7 @@ def test_template_shape_matches_the_contract():
     kinds = {s["kind"] for sc in sb["scenes"] for s in sc["shots"]}
     assert kinds == set(S.KINDS)
     assert sb["scenes"][0]["act"] == "cold_open" and sb["scenes"][-1]["act"] == "sign_off"
-    assert sb["scenes"][-1]["shots"][-1]["line"].endswith("Back in one hour.")
+    assert sb["scenes"][-1]["shots"][-1]["line"].endswith("Back next week.")
 
 
 def test_template_is_deterministic():

@@ -156,10 +156,10 @@ def seg_sharpness(clip: str, start: float, src_dur: float) -> float:
                sharpness(clip, start + max(0.0, src_dur - 0.08)))
 
 
-def _wrap_caption(text: str, width: int = 22) -> str:
+def _wrap_caption(text: str, width: int = 30) -> str:
     text = " ".join(text.split())
-    if len(text) > 40:
-        text = text[:39].rstrip() + "…"
+    if len(text) > 60:
+        text = text[:59].rstrip() + "…"
     lines = textwrap.wrap(text, width=width) or [""]
     if len(lines) > 2:
         lines = [lines[0], " ".join(lines[1:])]

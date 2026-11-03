@@ -5,6 +5,7 @@ Every network or parse error becomes an empty list; nothing here raises.
 """
 
 import json
+import os
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -96,12 +97,38 @@ _SOMBER = ("dead", "death", "dies", "died", "killed", "deadly", "fatal", "murder
            "child abuse", "funeral", "missing")
 
 
-def top(exclude: set[str] | None = None) -> dict | None:
+def top(exclude: set[str] | None = None, strategy: str | None = None) -> dict | None:
     """The top story that is not somber and not in `exclude`. None when no feed answered or no
-    acceptable story is left: a somber story is never returned as a fallback."""
+    acceptable story is left: a somber story is never returned as a fallback.
+    strategy "viral" tries the most-engaged last30days story first (see news_strategy below)."""
+    viral_pick = _viral_top(exclude, strategy)
+    if viral_pick:
+        return viral_pick
     for it in trending(10):
         if it["title"] in (exclude or set()):
             continue
         if not any(w in it["title"].lower() for w in _SOMBER):
             return it
     return None
+
+
+# --- Story strategy hook (viral.py) -------------------------------------------------------------
+# "viral": most-engaged story from last30days (Reddit, X, YouTube, TikTok, HN), falling back to the
+# headline feeds above. "headline": Google News / Hacker News only. Default: viral when the
+# last30days engine is installed, else headline. Env: SHOT_DIRECTOR_NEWS_STRATEGY.
+STRATEGIES = ("viral", "headline")
+
+
+def news_strategy(strategy: str | None = None) -> str:
+    s = (strategy or os.environ.get("SHOT_DIRECTOR_NEWS_STRATEGY") or "").strip().lower()
+    if s not in STRATEGIES:
+        from . import viral
+        s = "viral" if viral.available() else "headline"
+    return s
+
+
+def _viral_top(exclude: set[str] | None, strategy: str | None) -> dict | None:
+    if news_strategy(strategy) != "viral":
+        return None
+    from . import viral
+    return next((it for it in viral.viral_stories(limit=20) if it["title"] not in (exclude or set())), None)

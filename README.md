@@ -74,6 +74,15 @@ Optional env: `SHOT_DIRECTOR_VIDEO_MODEL` (default `bfl/flux-3-video`), `SHOT_DI
 
 Shot Director can direct itself from the news. It pulls the top trending headline (Google News top-stories RSS, falling back to the Hacker News front page; no API key, no X/Twitter), plans an anime satire episode around it, renders it and stitches it into one mp4. Left running, it is a news-directed anime channel in the spirit of @PsyopAnime's anime satire of current events (structure only; see `docs/psyopanime-formula.md`).
 
+### Where the stories come from
+
+Two strategies pick the story when no `--headline` is given:
+
+- **`viral`** (default when the last30days engine is installed): `viral.py` runs [last30days](https://github.com/mvanhorn/last30days-skill) once per topic (`breaking news, politics, tech, AI, crypto, sports, celebrity`; override with `SHOT_DIRECTOR_VIRAL_TOPICS`, comma-separated) over the last 48 hours across Reddit, X, YouTube, TikTok and Hacker News, four topics at a time (about 2 minutes cold). Each post's likes, upvotes, points, reshares, comments and views fold into one engagement number; posts nobody engaged with, replies and fragments are dropped, near-duplicate titles are merged, and the death/violence filter from `news.top()` applies (plus a few words social posts use, such as genocide or hostage). The pick is the most-engaged story not already in the ledger, and its platform and engagement reach the writer as the episode's source line, e.g. `via Reddit, 16.9K upvotes`. If last30days is missing, has no keys or fails, it logs one `[viral]` line and the headline feeds take over.
+- **`headline`**: Google News top stories, then the Hacker News front page (no keys).
+
+Switch: `--news-strategy viral|headline` (CLI), `"news_strategy"` (POST `/api/episode`), `GET /api/news?strategy=viral` (headline unless asked; the reply says which one answered), or `SHOT_DIRECTOR_NEWS_STRATEGY`. **Cache:** viral results are kept in `<media>/viral-cache.json` for 30 minutes (media = `SHOT_DIRECTOR_MEDIA`, default `./media`), so repeated episode runs and the hourly loop do not re-query. The engine is found at the newest `~/.claude/plugins/cache/last30days-skill/last30days/*/skills/last30days/scripts/last30days.py` (override `SHOT_DIRECTOR_LAST30DAYS`; its Python 3.12+ via `SHOT_DIRECTOR_LAST30DAYS_PYTHON`). It never routes through OpenRouter: the engine's OpenRouter endpoint is pointed at a closed local port, so its optional LLM rerank falls back to its local scorer.
+
 **The episode.** A deterministic template, fully offline (no LLM). The spine is an original deadpan Anchor at a desk in front of world-map monitors who reads the headline as a grave briefing line; the cutaways take it literally with absurd props (gravitas vs absurdity is the joke). Scene 1 opens on an extreme close-up of the Anchor's eyes with our series title, `THE HOURLY BRIEFING`. Every prompt leads with "2D cel anime frame, drawn animation, not a photograph" and uses the `anime` camera body (late-80s/90s OVA cel look, heavy ink lines, film grain, VHS softness, teal shadows vs burnt-orange highlights). Each scene carries a `caption` (one short clause) and a `narration` line, each shot its own `caption`, for subtitles and a voiceover track.
 
 **Rule: SFW and no real people's likeness.** Every character is an original archetype; the headline is on-screen text, never a depicted person. No weapons, no gore, no named anime or studio styles, none of PsyopAnime's logo, series names or character designs. `news.top()` skips stories about deaths and violence (satire of a tragedy is not the joke); if nothing else is left it returns nothing, so `/api/episode` answers 503 and the CLI exits 1, rather than render a somber story.
@@ -91,8 +100,8 @@ Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one 
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| GET | `/api/news` | | `{items: [{title, link, source, published, feed}]}` (10) |
-| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
+| GET | `/api/news?strategy=viral\|headline` | | `{items: [{title, link, source, published, feed}], strategy}` (10; viral items add `engagement`, `source_text`, `topic`) |
+| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true, news_strategy? = "viral" \| "headline"}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
 | GET | `/api/episodes` | | `{episodes: [ledger entries], auto}` |
 
 **Script writer and style sheet.** Before rendering, the template plan is rewritten by the Router script writer (`writer.py`, one chat-model call, cached per headline in `<media>/scripts-cache.json`, see `docs/WRITER.md`): logline, each scene's setting, caption and narration, each shot's move, caption and prompt. Any writer failure (mock mode, no key, bad reply, wrong counts) keeps the template; the plan's `script` field says which one ran. Anchor-desk scenes (cold open, sign-off, the 1-minute single scene, writer beats `anchor_desk`/`thesis`) take their start frame from the series style sheet (`style.py`, `<media>/style-sheet.png`, made once), so the Anchor and the look stay the same across episodes; crowd and vignette scenes use a plain frame, because the reference copies the Anchor's face onto everyone. `--no-writer` / `"writer": false` and `--no-style-sheet` / `"style_sheet": false` turn them off.
@@ -106,7 +115,7 @@ uv run shot-director-episode                                  # top new story ->
 uv run shot-director-episode --minutes 5                      # target length
 uv run shot-director-episode --headline "Mayor bans Mondays" --mock --out /tmp/ep
 uv run shot-director-episode --loop --every 60m               # self-running: a new story every hour
-# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --mock --out DIR --no-cut --no-writer --no-style-sheet --loop --every
+# flags: --headline --source --news-strategy viral|headline --engine --body --minutes --clip-seconds --parallel --mock --out DIR --no-cut --no-writer --no-style-sheet --loop --every
 # one-shot prints the episode mp4 path, then one JSON summary line; --loop prints one JSON line per tick
 ```
 

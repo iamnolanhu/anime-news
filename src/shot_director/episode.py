@@ -369,7 +369,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _reserve(media: Path, headline: str, source: str) -> tuple[str, str, str, str]:
+def _reserve(media: Path, headline: str, source: str,
+             news_strategy: str | None = None) -> tuple[str, str, str, str]:
     """Under the pick lock: choose the story and write a 'rendering' ledger entry before any paid call.
     Auto-pick skips every headline already in the ledger (rendering, done or failed); an explicit
     headline is refused only while another run is rendering it."""
@@ -377,11 +378,13 @@ def _reserve(media: Path, headline: str, source: str) -> tuple[str, str, str, st
         ledger = read_ledger(media)
         link = ""
         if not headline:
-            story = news.top(exclude={e["headline_raw"] for e in ledger if e.get("headline_raw")})
+            story = news.top(exclude={e["headline_raw"] for e in ledger if e.get("headline_raw")},
+                             strategy=news_strategy)
             if not story:
                 raise LookupError("no acceptable new headline (feeds unreachable, all rendered, or only "
                                   "stories about deaths/violence): pass a headline")
-            headline, source, link = story["title"], story.get("source", ""), story.get("link", "")
+            headline, source, link = (story["title"], story.get("source_text") or story.get("source", ""),
+                                      story.get("link", ""))
         elif any(e.get("headline_raw") == headline and e.get("status") == "rendering" for e in ledger):
             raise LookupError(f"already rendering: {headline}")
         entry_id = uuid.uuid4().hex[:12]
@@ -394,7 +397,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
             engine: str | None = None, body: str = "anime", minutes: float = DEFAULT_MINUTES,
             clip_seconds: int = DEFAULT_CLIP_SECONDS, parallel: int = DEFAULT_PARALLEL,
             render: bool = True, cut: bool = True, use_writer: bool = True,
-            style_sheet: bool = True) -> dict:
+            style_sheet: bool = True, news_strategy: str | None = None) -> dict:
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
     media = Path(media).resolve()
@@ -406,14 +409,15 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
         raise ValueError("minutes and clip_seconds must be positive")
     if not render:
         if not headline:
-            story = news.top(exclude={e["headline_raw"] for e in read_ledger(media) if e.get("headline_raw")})
+            story = news.top(exclude={e["headline_raw"] for e in read_ledger(media) if e.get("headline_raw")},
+                             strategy=news_strategy)
             if not story:
                 raise LookupError("no acceptable new headline: pass a headline")
-            headline, source = story["title"], story.get("source", "")
+            headline, source = story["title"], story.get("source_text") or story.get("source", "")
         return plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
                             engine=engine, use_writer=use_writer, media=media)
     media.mkdir(parents=True, exist_ok=True)
-    entry_id, headline, source, link = _reserve(media, headline, source)
+    entry_id, headline, source, link = _reserve(media, headline, source, news_strategy)
     started = time.time()
     try:
         plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
@@ -484,6 +488,9 @@ def main() -> None:
         description="Pick the top trending story, plan an anime episode, render it and stitch it.")
     ap.add_argument("--headline", help="use this headline instead of the top trending story")
     ap.add_argument("--source", default="", help="source name shown with --headline")
+    ap.add_argument("--news-strategy", choices=news.STRATEGIES, default=None,
+                    help="auto-pick: 'viral' = most-engaged last30days story (falls back to headlines), "
+                         "'headline' = Google News / Hacker News (default: viral when last30days is installed)")
     ap.add_argument("--engine", default=None, help="video engine id (default: bfl/flux-3-video)")
     ap.add_argument("--body", default="anime", help="camera body preset (default: anime)")
     ap.add_argument("--minutes", type=float, default=DEFAULT_MINUTES, help="episode length (default 1)")
@@ -509,7 +516,8 @@ def main() -> None:
     router = make_router(media)
     opts = dict(engine=args.engine, body=args.body, minutes=args.minutes,
                 clip_seconds=args.clip_seconds, parallel=args.parallel, cut=not args.no_cut,
-                use_writer=not args.no_writer, style_sheet=not args.no_style_sheet)
+                use_writer=not args.no_writer, style_sheet=not args.no_style_sheet,
+                news_strategy=args.news_strategy)
     if args.loop:
         print(f"[shot-director] {router.mode} channel: one episode every {args.every} into {media}",
               file=sys.stderr)

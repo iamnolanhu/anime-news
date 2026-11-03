@@ -166,6 +166,26 @@ def validate(script: object, scenes: int, clips_per_scene: list[int]) -> dict:
             "scenes": out_scenes, "sign_off": " ".join(str(script["sign_off"]).split())}
 
 
+_PAID = threading.local()
+
+
+def paid_calls() -> int:
+    """How many Router chat calls on THIS thread may have been billed: the Router answered 2xx, or reported credits
+    used on an error reply. Callers snapshot it before a writer step to know whether a refund is honest."""
+    return getattr(_PAID, "n", 0)
+
+
+def _count_paid() -> None:
+    _PAID.n = paid_calls() + 1
+
+
+def _credits_in(headers) -> float:
+    try:
+        return float((headers or {}).get("X-Comfy-Credits-Used") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
 def _chat(system: str, user: str, model: str = CHAT_MODEL, max_tokens: int = MAX_TOKENS,
           timeout: float = TIMEOUT_SECONDS) -> str:
     """One synchronous Messages call on Router (POST /v2/models/{model}). Returns the text reply."""
@@ -178,9 +198,12 @@ def _chat(system: str, user: str, model: str = CHAT_MODEL, max_tokens: int = MAX
         headers={"X-API-Key": key, "Content-Type": "application/json", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
+            _count_paid()
             CREDITS.record(r.headers)
             doc = json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
+        if _credits_in(e.headers) > 0:
+            _count_paid()
         raise RuntimeError(f"Router HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
     parts = doc.get("content") or []
     text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text")

@@ -386,16 +386,21 @@ def create_app(media: Path | None = None) -> FastAPI:
             minutes = min(minutes, lim["max_minutes"])
             charged = (visitor(request), "storyboards", lim["writer_usd"])
             usage.charge(*charged)
+        from . import writer
+        paid0 = writer.paid_calls()   # per thread: this request's writer calls only
+
+        def refund_if_unpaid() -> None:
+            # a writer reply that came back (even one later rejected) was billed: the charge stands
+            if charged and writer.paid_calls() == paid0:
+                usage.refund(*charged)
         try:
             sb = storyboard.build(headline, text=body.text or "", url=body.url or "", minutes=minutes,
                                   style=body.style or "")
         except storyboard.StoryboardError as e:
-            if charged:
-                usage.refund(*charged)
+            refund_if_unpaid()
             raise HTTPException(502, str(e)) from e
         except Exception as e:  # noqa: BLE001 - network, 402, timeouts: the writer failed
-            if charged:
-                usage.refund(*charged)
+            refund_if_unpaid()
             raise HTTPException(502, f"writer failed: {type(e).__name__}: {str(e)[:300]}") from e
         return {"storyboard": sb, "stats": storyboard.stats(sb)}
 

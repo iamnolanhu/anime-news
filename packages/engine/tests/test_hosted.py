@@ -338,3 +338,57 @@ def test_https_pins_the_ip_and_uses_the_hostname_for_sni(monkeypatch):
         assert dialed == [("93.184.216.34", 443)] and sni == ["tls.example"]
     finally:
         site.close()
+
+
+# -- a failed writer is refunded only when nothing was billed -----------------------------------------
+
+def _live_writer(monkeypatch, reply):
+    """Live mode with a stubbed Router chat endpoint: `reply()` returns a response object or raises."""
+    monkeypatch.delenv("ANIME_NEWS_MOCK", raising=False)
+    monkeypatch.setenv("COMFY_API_KEY", "test-key-not-real")
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.full_url)
+        return reply()
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    return calls
+
+
+class _Reply:
+    def __init__(self, body: bytes, headers=None):
+        self.body, self.headers = body, headers or {}
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def test_writer_failure_after_a_billed_reply_keeps_the_charge(tmp_path, monkeypatch):
+    calls = _live_writer(monkeypatch, lambda: _Reply(b'{"content": [{"type": "text", "text": "not json at all"}]}',
+                                                     {"X-Comfy-Credits-Used": "12"}))
+    c = client(tmp_path)
+    r = c.post("/api/storyboard", json={"headline": "Mayor bans Mondays"}, headers=AUTH)
+    assert r.status_code == 502 and len(calls) == 2          # two billed replies, both rejected
+    h = c.get("/api/health", headers=AUTH).json()
+    assert h["storyboards_left_for_you"] == 8 and h["budget_remaining_usd"] == 39.9   # charge kept
+
+
+def test_writer_failure_with_no_billed_call_is_refunded(tmp_path, monkeypatch):
+    import io
+    import urllib.error
+
+    def refused():
+        raise urllib.error.HTTPError("https://api.comfy.org/v2/models/x", 402, "Payment Required", {},
+                                     io.BytesIO(b"insufficient_credits"))
+    calls = _live_writer(monkeypatch, refused)
+    c = client(tmp_path)
+    r = c.post("/api/storyboard", json={"headline": "Mayor bans Mondays"}, headers=AUTH)
+    assert r.status_code == 502 and "writer failed" in r.json()["detail"] and len(calls) == 1
+    h = c.get("/api/health", headers=AUTH).json()
+    assert h["storyboards_left_for_you"] == 9 and h["budget_remaining_usd"] == 40.0   # refunded

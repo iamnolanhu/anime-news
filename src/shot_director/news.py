@@ -94,7 +94,8 @@ def trending(limit: int = 10) -> list[dict]:
 # Satire of a tragedy is not the joke: top() skips stories about deaths and violence.
 _SOMBER = ("dead", "death", "dies", "died", "killed", "deadly", "fatal", "murder",
            "shooting", "shot dead", "crash", "massacre", "war ", "bomb", "victim", "suicide",
-           "child abuse", "funeral", "missing")
+           "child abuse", "funeral", "missing", "genocide", "gaza", "hostage", "terror", "rape", "assault", "abuse", "famine", "massacr", "warfare", "airstrike", "shooter",
+)
 
 
 def top(exclude: set[str] | None = None, strategy: str | None = None) -> dict | None:

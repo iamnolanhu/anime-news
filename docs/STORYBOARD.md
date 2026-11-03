@@ -79,3 +79,10 @@ quality, `cost_estimate` (USD, computed before the render) and `credits_used` (t
 live render whose estimate is over N (the server reads `ANIME_NEWS_MAX_COST`). Seedance is priced from the Router's
 token rate (about $0.149 per second at 480p, 2.25x at 720p); the image, voice and SFX prices are rough constants
 (`ANIME_NEWS_PRICE_*`) until real `credits_used` totals replace them.
+
+## Shot order and the cut
+
+The order of talk shots, and of the groups of non-talk shots between them, is kept exactly as written. Inside one group of
+consecutive action / still / insert shots the anime cut decides the order itself (the sharpest gate-passing window opens, the rest
+alternate clip / still / clip for variety; see docs/EDIT.md). Reordering shots inside such a group changes which shot leads the
+group only when it is the sharpest; to force a shot to lead a beat, put a talk shot before it.

@@ -352,7 +352,7 @@ def render(sb: dict, router, media: Path, quality: str = DEFAULT_QUALITY, vertic
     sb = storyboard.normalize(sb)
     router.seedance_resolution = quality
     est = estimate(sb, quality, media)
-    if router.mode == "live" and max_cost and est["usd"] > max_cost:
+    if router.mode == "live" and max_cost is not None and est["usd"] > max_cost:
         raise CostCapExceeded(f"estimated ${est['usd']:.2f} is over the ${max_cost:.2f} cap: {est['parts']}")
     progress = progress or (lambda *a: None)
     entry_id, _, _, _ = episode._reserve(media, sb["headline"], sb.get("source_text_excerpt", ""))
@@ -414,7 +414,7 @@ def retry(router, media: Path, shots_file: Path, parallel: int = SHOT_PARALLEL, 
     est = retry_estimate(sb, shots, quality, media)
     if estimate_only:
         return {"estimate": est, "failed_shots": len(todo_idx), "episode_id": epid}
-    if router.mode == "live" and max_cost and est["usd"] > max_cost:
+    if router.mode == "live" and max_cost is not None and est["usd"] > max_cost:
         raise CostCapExceeded(f"retry estimated ${est['usd']:.2f} is over the ${max_cost:.2f} cap: {est['parts']}")
     started = time.time()
     credits0 = CREDITS.snapshot()

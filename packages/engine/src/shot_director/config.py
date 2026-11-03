@@ -6,6 +6,7 @@ Mock mode (ANIME_NEWS_MOCK=1 or the legacy SHOT_DIRECTOR_MOCK=1) hides the key e
 """
 
 import json
+import threading
 import os
 from pathlib import Path
 
@@ -28,6 +29,8 @@ def media_dir() -> Path:
 def mock_forced() -> bool:
     return os.environ.get("ANIME_NEWS_MOCK") == "1" or os.environ.get("SHOT_DIRECTOR_MOCK") == "1"
 
+_WRITE_LOCK = threading.Lock()
+
 
 def read() -> dict:
     try:
@@ -40,14 +43,19 @@ def read() -> dict:
 def write(doc: dict) -> None:
     """Atomic write, 0600 from the first byte (the file holds the key)."""
     path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
-    tmp = path.with_name(f".{path.name}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(doc, f, indent=1)
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    with _WRITE_LOCK:   # concurrent saves (two PUT /api/config at once) never interleave or race the rename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(doc, f, indent=1)
+            os.chmod(tmp, 0o600)
+            tmp.replace(path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
 
 
 def stored_key() -> str | None:

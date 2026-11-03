@@ -52,3 +52,31 @@ def test_edit_plan_groups_talk_and_cutins():
     assert len(clips) == len(set(clips)) == sum(1 for s in shots if s["clip"])
     assert len(stills) == len(set(stills)) == sum(1 for s in shots if s["kind"] in ("still", "insert"))
     assert plan["title_after_scene"] is not None   # the title lands after the cold open
+
+
+def test_retry_respects_estimate_only_and_zero_cap(tmp_path, monkeypatch):
+    """--retry must not spend: estimate_only returns the estimate, and a 0 cap refuses a live retry."""
+    import json
+    from shot_director import render_storyboard as rs
+
+    sb = rs.storyboard.normalize(rs.storyboard.template("Mayor bans Mondays", minutes=0.5))
+    sc = sb["scenes"][0]
+    talk = next(s for s in sc["shots"] if s["kind"] == "talk")
+    shots = [{"id": s["id"], "scene": sc["id"], "kind": s["kind"], "line": s.get("line"), "cast": s.get("cast") or [],
+              "clip": None if s is talk else "x.mp4", "frame": None if s is talk else "x.png"} for s in sc["shots"]]
+    doc = {"storyboard": sb, "shots": shots, "episode_id": "episode-test", "quality": "480p"}
+    f = tmp_path / "episode-test.shots.json"
+    f.write_text(json.dumps(doc))
+
+    class Live:
+        mode = "live"
+        seedance_resolution = "480p"
+
+    out = rs.retry(Live(), tmp_path, f, estimate_only=True)
+    assert out["failed_shots"] == 1 and out["estimate"]["usd"] > 0
+    try:
+        rs.retry(Live(), tmp_path, f, max_cost=0.0)
+    except rs.CostCapExceeded:
+        pass
+    else:
+        raise AssertionError("a zero cap must refuse a live retry")

@@ -189,30 +189,24 @@ def retry_failed(router, media: Path, shots_file: Path, parallel: int = SHOT_PAR
 # -- the cut ------------------------------------------------------------------------------------------
 
 def edit_plan(script: dict, shots: list[dict], media: Path) -> dict:
-    """Scenes for edit.assemble: every talk shot is its own scene (one continuous take, its own sound);
-    consecutive action shots of one act form one fast-cut scene. The title card follows the cold open."""
+    """Scenes for edit.assemble: one scene per act, its talk and action shots in script order (talk takes keep
+    their own sound; action clips are cut by their angles). Subtitles come from the spoken lines only, so the
+    action shots' captions are not shown; the countdown is drawn when the script names one."""
     from . import music
     kit = music.music_kit(media) if hasattr(music, "music_kit") else {}
     scenes: list[dict] = []
     for s in shots:
         if not s["id"]:
             continue
-        clip = str(media / s["id"])
+        if not scenes or scenes[-1]["beat"] != s["act"]:
+            scenes.append({"beat": s["act"], "shots": [], "clip_audio_gain": 0.35})
+        shot = {"kind": s["kind"], "clip": str(media / s["id"])}
         if s["kind"] == "talk":
-            scenes.append({"beat": s["act"], "talk": True, "line": s["line"], "caption": s["line"],
-                           "speaker": s["speaker"], "clips": [clip], "stills": []})
-        elif scenes and not scenes[-1].get("talk") and scenes[-1]["beat"] == s["act"]:
-            scenes[-1]["clips"].append(clip)
-            if s["caption"]:
-                scenes[-1]["caption"] = (scenes[-1]["caption"] + " " + episode._sentence(s["caption"])).strip()
-        else:
-            scenes.append({"beat": s["act"], "action": s["act"] != "button", "clips": [clip], "stills": [],
-                           "caption": episode._sentence(s["caption"]) if s["caption"] else "",
-                           "clip_audio_gain": 0.35})
-    plan = {"title": SERIES, "logline": script["title_card"], "fps": 24, "size": [1280, 720], "scenes": scenes,
-            "narration": [], "music": kit.get("bed"), "music_intro": kit.get("intro"), "sfx": [],
-            "title_after_scene": 0 if scenes and scenes[0]["beat"] == "cold_open" else None,
-            "countdown": {"label": script["countdown"], "scene_beat": "escalation"}}
+            shot.update(line=s["line"], speaker=s["speaker"])
+        scenes[-1]["shots"].append(shot)
+    plan = {"title": SERIES, "fps": 24, "size": [1280, 720], "scenes": scenes, "narration": [],
+            "music": kit.get("bed"), "sfx": [],
+            "countdown": {"label": script["countdown"], "scene_beat": "escalation"} if script.get("countdown") else None}
     if kit.get("whoosh"):
         plan["sfx"].append({"path": kit["whoosh"], "at": None, "lead": 0.25, "gain": 0.6})
     if kit.get("impact"):

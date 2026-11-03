@@ -222,47 +222,41 @@ def usable(r: dict) -> bool:
 # -- the cut --------------------------------------------------------------------------------------
 
 def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None = None) -> dict:
-    """edit.assemble scenes: each talk shot is its own scene (one take, its own sound); the other shots of a
-    storyboard scene between talk shots form one fast-cut scene of clips (action) and stills (still/insert).
-    The scene's narration rides on its first non-talk edit scene."""
+    """edit.assemble scenes: one per storyboard scene, its rendered shots in storyboard order (talk takes with their
+    own sound, action clips, stills and inserts as stills), with the scene's narration, which edit.py plays in full
+    over the scene's first run of pictures. Subtitles come from what is spoken; the countdown is drawn only when
+    the storyboard names one."""
     from . import music
     kit = music.music_kit(media)
     narration = narration or {}
     by_id = {r["id"]: r for r in shots}
     scenes: list[dict] = []
     for sc in sb["scenes"]:
-        narrated = False
+        items = []
         for s in sc["shots"]:
             r = by_id.get(s["id"])
             if not r or not usable(r):
                 continue
             if r["kind"] == "talk":
-                scenes.append({"beat": sc["act"], "talk": True, "line": r["line"], "caption": r["line"],
-                               "speaker": (r["cast"] or [""])[0], "clips": [str(media / r["clip"])], "stills": [],
-                               "storyboard_scene": sc["id"]})
-                continue
-            cur = scenes[-1] if scenes else None
-            if not cur or cur.get("talk") or cur.get("storyboard_scene") != sc["id"]:
-                cur = {"beat": sc["act"], "action": sc["act"] not in ("sign_off",), "clips": [], "stills": [],
-                       "caption": sc.get("caption") or "", "storyboard_scene": sc["id"]}
-                if not narrated and sc.get("narration"):
-                    cur["narration"] = sc["narration"]
-                    if narration.get(sc["id"]):
-                        cur["narration_audio"] = narration[sc["id"]]
-                    narrated = True
-                scenes.append(cur)
-            if r["kind"] == "action":
-                cur["clips"].append(str(media / r["clip"]))
+                items.append({"kind": "talk", "clip": str(media / r["clip"]), "line": r["line"],
+                              "speaker": (r["cast"] or [""])[0]})
+            elif r["kind"] == "action":
+                items.append({"kind": "action", "clip": str(media / r["clip"])})
             else:
-                cur["stills"].append(str(media / r["frame"]))
+                items.append({"kind": "still", "path": str(media / r["frame"])})
+        if not items:
+            continue
+        scene = {"beat": sc["act"], "storyboard_scene": sc["id"], "shots": items}
+        if sc.get("narration"):
+            scene["narration"] = sc["narration"]
+            if narration.get(sc["id"]):
+                scene["narration_audio"] = narration[sc["id"]]
+        scenes.append(scene)
     acts = [s["beat"] for s in scenes]
-    cold = max((i for i, a in enumerate(acts) if a == "cold_open"), default=None)
     cd_beat = next((a for a in ("escalation", "climax", "turn", "setup") if a in acts), None)
-    plan = {"title": sb.get("series") or storyboard.SERIES, "logline": sb.get("title_card") or sb["headline"][:30].upper(),
-            "fps": 24, "size": [1280, 720], "scenes": scenes, "narration": [],
-            "music": kit.get("bed"), "music_intro": kit.get("intro"), "sfx": [],
-            "title_after_scene": cold,
-            "countdown": {"label": sb.get("countdown") or storyboard.COUNTDOWN, "scene_beat": cd_beat} if cd_beat else None}
+    plan = {"title": sb.get("series") or storyboard.SERIES, "fps": 24, "size": [1280, 720], "scenes": scenes,
+            "narration": [], "music": kit.get("bed"), "sfx": [],
+            "countdown": {"label": sb["countdown"], "scene_beat": cd_beat} if cd_beat and sb.get("countdown") else None}
     if kit.get("whoosh"):
         plan["sfx"].append({"path": kit["whoosh"], "at": None, "lead": 0.25, "gain": 0.6})
     if kit.get("impact"):

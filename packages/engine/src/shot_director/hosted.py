@@ -17,6 +17,7 @@ access token.
 
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import os
@@ -162,29 +163,135 @@ class Usage:
         }
 
 
+MAX_REDIRECTS = 3
+MAX_BODY = 2_000_000          # bytes; storyboard.fetch_url reads at most this much
+REDIRECT_CODES = (301, 302, 303, 307, 308)
+
+
+def _is_public(addr: str) -> bool:
+    ip = ipaddress.ip_address(addr.split("%")[0])
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_global
+
+
+def _resolve_public(url: str) -> tuple[urllib.parse.SplitResult, str, int]:
+    """(parts, ip, port) for an http(s) URL whose host resolves ONLY to public addresses. One DNS lookup; the caller
+    connects to the returned ip, so a second (rebound) answer can never be used. Raises URLError otherwise."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise urllib.error.URLError("not an http(s) URL")
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parts.hostname, port, type=socket.SOCK_STREAM)
+        addrs = [info[4][0] for info in infos]
+        if not addrs or not all(_is_public(a) for a in addrs):
+            raise urllib.error.URLError("not a public address")
+    except (OSError, ValueError, UnicodeError) as e:
+        if isinstance(e, urllib.error.URLError):
+            raise
+        raise urllib.error.URLError(f"cannot resolve: {type(e).__name__}") from e
+    return parts, addrs[0], port
+
+
 def public_url(url: str) -> bool:
     """True when every address the URL's host resolves to is a public one (no loopback, private, link-local or
     cloud metadata addresses): the shared box must not fetch its own network for a visitor."""
     try:
-        parts = urllib.parse.urlsplit(url)
-        if parts.scheme not in ("http", "https") or not parts.hostname:
-            return False
-        infos = socket.getaddrinfo(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
-    except (OSError, ValueError, UnicodeError):
+        _resolve_public(url)
+    except urllib.error.URLError:
         return False
-    addrs = {info[4][0] for info in infos}
-    return bool(addrs) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addrs)
+    return True
 
 
-class _PublicRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not public_url(newurl):
-            raise urllib.error.URLError("redirect to a non-public address")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+def _connect(ip: str, port: int, timeout: float) -> socket.socket:
+    return socket.create_connection((ip, port), timeout)
+
+
+def _ssl_context():
+    import ssl
+    return ssl.create_default_context()
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    """Connects to an already-checked IP; the Host header stays the URL's hostname."""
+
+    def __init__(self, host: str, port: int, ip: str, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._ip = ip
+
+    def connect(self) -> None:
+        self.sock = _connect(self._ip, self.port, self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    """TLS to an already-checked IP; SNI and certificate checks use the URL's hostname."""
+
+    def __init__(self, host: str, port: int, ip: str, timeout: float):
+        ctx = _ssl_context()
+        super().__init__(host, port, timeout=timeout, context=ctx)
+        self._ip, self._ctx = ip, ctx
+
+    def connect(self) -> None:
+        self.sock = self._ctx.wrap_socket(_connect(self._ip, self.port, self.timeout), server_hostname=self.host)
+
+
+class _Capped:
+    """The final response, read capped at MAX_BODY bytes; closing it closes the connection."""
+
+    def __init__(self, resp: http.client.HTTPResponse, conn: http.client.HTTPConnection, url: str):
+        self._resp, self._conn, self.url = resp, conn, url
+        self.status, self.headers, self._left = resp.status, resp.headers, MAX_BODY
+
+    def read(self, amt: int | None = None) -> bytes:
+        n = self._left if amt is None or amt < 0 else min(amt, self._left)
+        data = self._resp.read(n) if n > 0 else b""
+        self._left -= len(data)
+        return data
+
+    def geturl(self) -> str:
+        return self.url
+
+    def close(self) -> None:
+        self._resp.close()
+        self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
 
 def open_public(req: urllib.request.Request, timeout: float):
-    """urlopen for hosted mode: the first URL and every redirect must be public."""
-    if not public_url(req.full_url):
-        raise urllib.error.URLError("not a public address")
-    return urllib.request.build_opener(_PublicRedirects).open(req, timeout=timeout)
+    """GET for hosted mode, safe against DNS rebinding: each hop resolves the host once, refuses anything that is
+    not public, and connects to that very IP (Host header and TLS SNI/certificate use the hostname). Up to
+    MAX_REDIRECTS redirects, each checked the same way; the body is capped at MAX_BODY bytes. Proxies are not used."""
+    url = req.full_url
+    headers = {k: v for k, v in req.header_items() if k.lower() not in ("host", "connection")}
+    headers["Connection"] = "close"
+    for hop in range(MAX_REDIRECTS + 1):
+        parts, ip, port = _resolve_public(url)
+        cls = _PinnedHTTPS if parts.scheme == "https" else _PinnedHTTP
+        conn = cls(parts.hostname, port, ip, timeout)
+        path = urllib.parse.urlunsplit(("", "", parts.path or "/", parts.query, ""))
+        try:
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+        except BaseException:
+            conn.close()
+            raise
+        if resp.status in REDIRECT_CODES and resp.headers.get("Location"):
+            location = resp.headers["Location"]
+            resp.close()
+            conn.close()
+            if hop == MAX_REDIRECTS:
+                raise urllib.error.URLError(f"more than {MAX_REDIRECTS} redirects")
+            url = urllib.parse.urljoin(url, location)
+            continue
+        if resp.status >= 400:
+            hdrs = resp.headers
+            resp.close()
+            conn.close()
+            raise urllib.error.HTTPError(url, resp.status, resp.reason, hdrs, None)
+        return _Capped(resp, conn, url)
+    raise urllib.error.URLError(f"more than {MAX_REDIRECTS} redirects")

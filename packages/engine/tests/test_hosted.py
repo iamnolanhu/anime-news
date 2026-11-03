@@ -188,3 +188,153 @@ def test_hosted_full_render_returns_site_relative_media(tmp_path):
     assert j["status"] == "done", j
     assert j["episode"]["mp4_url"].startswith("/media/episode-")
     assert c.get(j["episode"]["mp4_url"], headers=AUTH).status_code == 200
+
+
+# -- URL fetches resolve once and connect to the checked IP (DNS rebinding) -------------------------
+
+class _Site:
+    """A local HTTP server standing in for public hosts: routes by path, records the Host header of each request."""
+
+    def __init__(self, routes):
+        import http.server
+        seen = self.seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.headers.get("Host"), self.path))
+                code, headers, body = routes[self.path]
+                self.send_response(code)
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _rebinding_dns(monkeypatch, answers):
+    """getaddrinfo that answers from a per-host list: first answer, then the next, ... (the last one repeats)."""
+    calls = []
+
+    def fake(host, port, *a, **k):
+        if host not in answers:   # IP literals (and the test's own loopback dials) resolve to themselves
+            fam = 10 if ":" in host else 2
+            return [(fam, 1, 6, "", (host, port))]
+        calls.append(host)
+        seq = answers[host]
+        ip = seq.pop(0) if len(seq) > 1 else seq[0]
+        return [(2, 1, 6, "", (ip, port))]
+    monkeypatch.setattr(hosted.socket, "getaddrinfo", fake)
+    return calls
+
+
+def _route_connects_to(monkeypatch, site):
+    """Every pinned connection lands on the local site; records which (ip, port) the engine asked for."""
+    import socket as real_socket
+    dialed = []
+
+    def connect(ip, port, timeout):
+        dialed.append((ip, port))
+        return real_socket.create_connection(("127.0.0.1", site.port), timeout)
+    monkeypatch.setattr(hosted, "_connect", connect)
+    return dialed
+
+
+def _get(url):
+    import urllib.request
+    return hosted.open_public(urllib.request.Request(url, headers={"User-Agent": "t"}), timeout=5)
+
+
+def test_fetch_connects_to_the_ip_it_checked_not_a_rebound_one(monkeypatch):
+    site = _Site({"/news": (200, {"Content-Type": "text/plain; charset=utf-8"}, b"hello")})
+    try:
+        dns = _rebinding_dns(monkeypatch, {"rebind.example": ["93.184.216.34", "127.0.0.1"]})
+        dialed = _route_connects_to(monkeypatch, site)
+        with _get("http://rebind.example/news") as r:
+            assert r.read() == b"hello" and r.headers.get_content_charset() == "utf-8"
+        assert dns == ["rebind.example"]                    # resolved once per hop
+        assert dialed == [("93.184.216.34", 80)]            # connected to the checked public IP
+        assert site.seen == [("rebind.example", "/news")]   # Host header is the hostname
+    finally:
+        site.close()
+
+
+def test_fetch_refuses_a_host_that_resolves_private(monkeypatch):
+    import urllib.error
+    _rebinding_dns(monkeypatch, {"inside.example": ["10.0.0.5"], "mixed.example": ["93.184.216.34", "::ffff:127.0.0.1"]})
+    monkeypatch.setattr(hosted, "_connect", lambda *a: (_ for _ in ()).throw(AssertionError("must not connect")))
+    for url in ("http://inside.example/", "http://169.254.169.254/latest/meta-data/", "http://[::ffff:10.0.0.1]/"):
+        with pytest.raises(urllib.error.URLError):
+            _get(url)
+
+
+def test_every_redirect_hop_is_checked_and_pinned(monkeypatch):
+    import urllib.error
+    site = _Site({"/a": (302, {"Location": "http://second.example/b"}, b""),
+                  "/b": (200, {}, b"ok"),
+                  "/evil": (302, {"Location": "http://rebind.example/b"}, b"")})
+    try:
+        # second.example: public on its own lookup -> followed, pinned to that IP
+        _rebinding_dns(monkeypatch, {"first.example": ["93.184.216.34"], "second.example": ["93.184.216.35"],
+                                     "rebind.example": ["10.0.0.9"]})
+        dialed = _route_connects_to(monkeypatch, site)
+        with _get("http://first.example/a") as r:
+            assert r.read() == b"ok"
+        assert dialed == [("93.184.216.34", 80), ("93.184.216.35", 80)]
+        assert site.seen == [("first.example", "/a"), ("second.example", "/b")]
+        # a redirect to a host that resolves private is refused before connecting
+        dialed.clear()
+        with pytest.raises(urllib.error.URLError):
+            _get("http://first.example/evil")
+        assert dialed == [("93.184.216.34", 80)]
+    finally:
+        site.close()
+
+
+def test_redirects_capped_at_three_and_body_capped(monkeypatch):
+    import urllib.error
+    hops = {f"/r{i}": (302, {"Location": f"/r{i + 1}"}, b"") for i in range(3)}
+    loop = {f"/s{i}": (302, {"Location": f"/s{i + 1}"}, b"") for i in range(5)}
+    site = _Site({**hops, "/r3": (200, {}, b"three"), **loop, "/big": (200, {}, b"x" * (hosted.MAX_BODY + 10))})
+    try:
+        _rebinding_dns(monkeypatch, {"a.example": ["93.184.216.34"]})
+        _route_connects_to(monkeypatch, site)
+        with _get("http://a.example/r0") as r:             # exactly 3 redirects: followed
+            assert r.read() == b"three"
+        site.seen.clear()
+        with pytest.raises(urllib.error.URLError, match="redirects"):
+            _get("http://a.example/s0")                    # a 4th redirect is refused
+        assert [p for _, p in site.seen] == ["/s0", "/s1", "/s2", "/s3"]
+        with _get("http://a.example/big") as r:
+            assert len(r.read()) == hosted.MAX_BODY and r.read() == b""
+    finally:
+        site.close()
+
+
+def test_https_pins_the_ip_and_uses_the_hostname_for_sni(monkeypatch):
+    site = _Site({"/s": (200, {}, b"secure")})
+    sni = []
+
+    class FakeContext:
+        def wrap_socket(self, sock, server_hostname=None):
+            sni.append(server_hostname)
+            return sock                                    # plaintext to the local stand-in
+    try:
+        monkeypatch.setattr(hosted, "_ssl_context", FakeContext)
+        _rebinding_dns(monkeypatch, {"tls.example": ["93.184.216.34", "127.0.0.1"]})
+        dialed = _route_connects_to(monkeypatch, site)
+        with _get("https://tls.example/s") as r:
+            assert r.read() == b"secure"
+        assert dialed == [("93.184.216.34", 443)] and sni == ["tls.example"]
+    finally:
+        site.close()

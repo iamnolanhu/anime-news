@@ -17,7 +17,7 @@ import urllib.request
 
 from . import presets, writer
 
-SERIES = "THE HOURLY BRIEFING"
+SERIES = "THE WEEKLY BRIEFING"
 ACTS = ("cold_open", "setup", "escalation", "turn", "climax", "sign_off")
 MIDDLE_ACTS = ("setup", "escalation", "turn", "climax")
 KINDS = ("talk", "action", "still", "insert")
@@ -32,7 +32,8 @@ PROMPT_MAX_WORDS = 60
 URL_TIMEOUT = 10
 SOURCE_MAX = 6000
 EXCERPT_MAX = 600
-SIGN_OFF = "Back in one hour."
+SIGN_OFF = "Back next week."
+COUNTDOWN = "NEXT BRIEFING IN"   # the countdown clock's default label
 
 # ElevenLabs premade voices used only as timbre references for Seedance (the clip speaks the line itself).
 DEFAULT_VOICES = {"anchor": "onwK4e9ZLuTAKqWW03F9", "operative": "XB0fDUnXU5powFXDhCwa",
@@ -252,7 +253,7 @@ _TEMPLATE = {
     ]),
     "setup": ("the anime newsroom, a long desk before a wall of world-map monitors", "{short}",
               "Sources confirm it. {h}. Officials have convened. Nobody was ready.", [
-        ("talk", ["anchor"], "Good evening. Tonight: {short_line}", "Medium shot of KUROGANE at the news desk, facing camera", "dolly_in"),
+        ("talk", ["anchor"], "Good evening. This week: {short_line}", "Medium shot of KUROGANE at the news desk, facing camera", "dolly_in"),
         ("action", [], "", "Overhead shot of a war-room table where an oversized absurd prop literalizes the headline, staffers recoil", "handheld"),
         ("still", [], "", "Low angle of invented officials staring in silence at a glowing map", "static"),
         ("insert", [], "", "Close-up of a classified folder stamped URGENT with \"{h}\" typed on the cover", "static"),
@@ -296,7 +297,7 @@ def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
     h = " ".join(headline.split()).replace('"', "'")
     words = h.split()
     short = " ".join(words[:6]) + ("..." if len(words) > 6 else "")
-    fill = {"h": h, "short": short, "short_line": _clip_chars(short, LINE_MAX - 22)}
+    fill = {"h": h, "short": short, "short_line": _clip_chars(short, LINE_MAX - 25)}
     scenes = []
     for i, act in enumerate(act_plan(scene_count(minutes)), 1):
         setting, caption, narration, shots = _TEMPLATE[act]
@@ -307,13 +308,13 @@ def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
                                  for j, (k, cast, line, prompt, move) in enumerate(shots, 1)]})
     return normalize({"headline": h, "minutes": minutes, "source_text_excerpt": text[:EXCERPT_MAX],
                       "logline": f"{SERIES}: \"{h}\", briefed like a war-room emergency and taken literally.",
-                      "title_card": _clip_chars(short.upper(), 30), "countdown": "DEADLINE IN",
+                      "title_card": _clip_chars(short.upper(), 30), "countdown": COUNTDOWN,
                       "cast": default_cast(), "scenes": scenes, "writer": "template"})
 
 
 # -- the writer -----------------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are the head writer and storyboard artist of "{series}", an original 2D anime news show (late-1980s OVA look) that turns one real headline into a short episode people share.
+SYSTEM_PROMPT = """You are the head writer and storyboard artist of "{series}", an original 2D anime news show (late-1980s OVA look). Each episode is this week's briefing: it turns the week's real headline(s) into a short episode people share. The anchor signs off with "back next week".
 
 THE SHOW
 - Deadpan war-room gravitas applied to an absurd or mundane claim. The characters never wink; the joke is the contrast.
@@ -343,7 +344,7 @@ HARD RULES
 - Never depict, describe or name a real person; refer to people in the headline only by role ("the official"). Invented countries and institutions only. No real logos or flags. Safe for work: no weapons pointed at people, no gore. Never name an anime studio, film or artist.
 {style}
 OUTPUT: ONE JSON object, nothing else (no prose, no code fences):
-{{"logline": "one-sentence pitch", "title_card": "<= 30 chars, ALL CAPS", "countdown": "the clock's label, <= 24 chars",
+{{"logline": "one-sentence pitch", "title_card": "<= 30 chars, ALL CAPS", "countdown": "the clock's label, <= 24 chars (default: NEXT BRIEFING IN)",
   "cast": [{{"id", "name", "role", "look"}}],
   "scenes": [{{"act", "setting": "<= 20 words", "caption", "narration",
               "shots": [{{"kind": "talk|action|still|insert", "cast": ["id"], "line": "only for talk", "prompt", "move", "seconds"}}]}}]}}"""

@@ -124,7 +124,7 @@ a countdown clock, a genre-pastiche vignette that stands in for the moral, headl
 Writer v2 contract (Sonnet 5.5, one structured call):
 - Series bible (fixed): 4 recurring fictional characters with name, trait, want, visual tag line, voice id. Example roles: the Handler (suited, sunglasses), the General, the Pilot, the Anchor.
 - Episode = 5 acts: (1) 0-8 s image-only cold open, no words; (2) title + brand + thesis sentence; (3) escalation with a visible clock or counter; (4) pastiche vignette that dramatises the moral
-  with a different genre look; (5) twist line + button + "next hour" cliffhanger. One running gag carried across episodes (e.g. a recurring countdown).
+  with a different genre look; (5) twist line + button + "next week" cliffhanger. One running gag carried across episodes (e.g. a recurring countdown).
 - Each beat: `{id, act, speaker, line (<= 12 words), visual_subject, shot_type, source: seedance|sheet|ui|ffmpeg, camera, sfx, music_cue}`.
 - Callback rule: every episode must reuse >=1 element from the previous episode (a face, a gag, a clock).
 Script JSON v2 sketch: `{series:{characters:[{id,name,want,look,voice}]}, episode:{headline,thesis,acts:[{n,goal,beats:[...]}], cliffhanger, callback}}`.

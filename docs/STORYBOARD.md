@@ -10,7 +10,7 @@ storyboard is checked by the same rules as the writer's reply.
   "id": "sb-3f1c0a9e2b",
   "headline": "Mayor bans Mondays",
   "source_text_excerpt": "first ~600 characters of the article text, if any",
-  "series": "THE HOURLY BRIEFING",
+  "series": "THE WEEKLY BRIEFING",
   "logline": "one-sentence pitch",
   "minutes": 1,
   "title_card": "MONDAY IS CANCELLED",
@@ -48,7 +48,7 @@ storyboard is checked by the same rules as the writer's reply.
 | `id`s | optional on input; missing or duplicate ids are regenerated |
 
 Extra optional fields: `title_card` (the 9:16 export's title and the cut's title card), `countdown` (label of the red
-countdown on the escalation scene), `style` (extra visual direction), `writer` (which model wrote it).
+countdown on the escalation scene; default `NEXT BRIEFING IN`), `style` (extra visual direction), `writer` (which model wrote it).
 
 ## Rules
 
@@ -60,7 +60,7 @@ countdown on the escalation scene), `style` (extra visual direction), `writer` (
 - The cut never shows a source moment twice: each clip is cut into disjoint windows, each still appears once, and a
   clip's start frame is never used as a still. The cut report (`<episode>.mp4.cuts.json`, `reuse`) recounts it from
   the final timeline.
-- The last shot of the episode is the Anchor's talk shot ending in "Back in one hour." (the writer is told; the
+- The last shot of the episode is the Anchor's talk shot ending in "Back next week." (the writer is told; the
   validator appends it to a writer storyboard whose last shot is a talk shot without it).
 
 ## Render outputs

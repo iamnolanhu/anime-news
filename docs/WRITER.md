@@ -14,7 +14,7 @@ Neither module edits `episode.py`, `edit.py`, `app.py` or `router_client.py`.
 - Call: synchronous `POST https://api.comfy.org/v2/models/{model}` with an Anthropic Messages body
   `{max_tokens, system, messages:[{role:"user", content}]}` (from the model's `openapi.json`; `model` is optional).
   The reply text is `content[].text`.
-- Entry point: `write_script(headline, source, minutes, scenes, clips_per_scene, series_title="THE HOURLY BRIEFING", *, media_dir=None, model=...)`.
+- Entry point: `write_script(headline, source, minutes, scenes, clips_per_scene, series_title="THE WEEKLY BRIEFING", *, media_dir=None, model=...)`.
 - Prompts: `script_to_prompts(script, body="anime")` returns one prompt per shot in episode order:
   STYLE LEAD + shot visual + scene setting + safety tail. STYLE LEAD =
   `2D cel anime frame, drawn animation, not a photograph, not a 3D render, late-1980s OVA cel look, heavy ink line art, film grain, VHS softness, teal shadows, burnt-orange highlights`
@@ -80,10 +80,10 @@ style.ensure_style_sheet(media, router)                                  # once 
 style.generate_styled_frame(router, sc["scene"], media / frame_name, media)  # replaces router.generate_frame(...)
 ```
 
-## System prompt (verbatim, as sent with series = THE HOURLY BRIEFING)
+## System prompt (verbatim, as sent with series = THE WEEKLY BRIEFING)
 
 ```text
-You write scripts for "THE HOURLY BRIEFING", an original 2D anime news show in the style of a late-1980s OVA: a deadpan war-room briefing that treats one real news headline with total gravitas and illustrates it with absurd literal props.
+You write scripts for "THE WEEKLY BRIEFING", an original 2D anime news show in the style of a late-1980s OVA: a deadpan war-room briefing that treats one real news headline with total gravitas and illustrates it with absurd literal props.
 
 VOICE
 - The narrator is a calm, clipped intelligence briefer. Short declarative sentences. Never winks, never explains the joke.

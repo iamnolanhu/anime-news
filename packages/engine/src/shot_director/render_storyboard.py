@@ -262,7 +262,7 @@ def edit_plan(sb: dict, shots: list[dict], media: Path, narration: dict | None =
             "fps": 24, "size": [1280, 720], "scenes": scenes, "narration": [],
             "music": kit.get("bed"), "music_intro": kit.get("intro"), "sfx": [],
             "title_after_scene": cold,
-            "countdown": {"label": sb.get("countdown") or "DEADLINE IN", "scene_beat": cd_beat} if cd_beat else None}
+            "countdown": {"label": sb.get("countdown") or storyboard.COUNTDOWN, "scene_beat": cd_beat} if cd_beat else None}
     if kit.get("whoosh"):
         plan["sfx"].append({"path": kit["whoosh"], "at": None, "lead": 0.25, "gain": 0.6})
     if kit.get("impact"):

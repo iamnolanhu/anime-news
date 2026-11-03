@@ -24,6 +24,15 @@ uvx --from "git+https://github.com/iamnolanhu/anime-news#subdirectory=packages/e
 
 Try the Studio without installing anything: [https://anime-news-nine.vercel.app/studio?mock=1](https://anime-news-nine.vercel.app/studio?mock=1) runs a stand-in engine inside the page.
 
+## The Weekly Briefing
+
+The show is **THE WEEKLY BRIEFING**: one episode per week with that week's top headline in each of five topics (AI, crypto,
+politics, tech, markets), signed off "Back next week." `anime-news weekly --week 2026-W44` builds one; `--weeks 2026-W01..2026-W44`
+backfills the year. Details, the manifest shape and the backfill run: [docs/WEEKLY.md](docs/WEEKLY.md).
+
+An hourly self-running channel still exists in the code (`shot-director-episode --loop --every 60m`, or `SHOT_DIRECTOR_AUTO=1`
+on the server). It is optional and off by default; we may turn it on if we get sponsored compute.
+
 ## Your key stays on your machine
 
 You bring a Comfy API key (platform.comfy.org, API Keys). The Studio keeps it in your browser's localStorage and hands it to the engine on `127.0.0.1` (it refuses to send it to any other engine URL); the engine stores it in `~/.anime-news/config.json` with 0600 permissions. Storyboards and videos live in `~/.anime-news/` and in your browser.
@@ -65,7 +74,7 @@ The engine listens on `http://127.0.0.1:8765`. CORS allows the site's origin (`A
 Storyboard JSON:
 
 ```json
-{ "id": "", "headline": "", "source_text_excerpt": "", "series": "THE HOURLY BRIEFING", "logline": "", "minutes": 1,
+{ "id": "", "headline": "", "source_text_excerpt": "", "series": "THE WEEKLY BRIEFING", "logline": "", "minutes": 1,
   "cast": [{ "id": "", "name": "", "role": "", "look": "", "voice": "" }],
   "scenes": [{ "id": "", "act": "cold_open|setup|escalation|turn|climax|sign_off", "setting": "", "caption": "", "narration": "",
                "shots": [{ "id": "", "kind": "talk|action|still|insert", "cast": [""], "line": "spoken line (optional)", "prompt": "", "move": "", "seconds": 5 }] }] }

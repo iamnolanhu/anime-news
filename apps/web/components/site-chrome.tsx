@@ -40,6 +40,14 @@ export function SiteFooter() {
           <Link href="/studio" className="hover:text-gold">Studio</Link>
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="hover:text-gold">Source</a>
           <a href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer" className="hover:text-gold">MIT</a>
+          <a
+            href="https://sigmasynapses.com"
+            target="_blank"
+            rel="noopener"
+            className="font-sans text-[10px] normal-case tracking-normal text-[var(--sd-muted)] hover:text-gold"
+          >
+            Built by Sigma Synapses
+          </a>
         </nav>
       </div>
     </footer>

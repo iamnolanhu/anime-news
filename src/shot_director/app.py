@@ -94,9 +94,12 @@ def generate_shot(req: ShotRequest) -> dict:
     frame = _media_path(req.frame) if req.frame else None
     name = f"shot-{uuid.uuid4().hex[:8]}.mp4"
     extra = {}
+    previous_id = None
     if router.mode == "live" and engine == CONTINUATION_ENGINE and queue:
         # FLUX 3 Video v2v: shot N+1 continues from the end of shot N (per shot, FLUX only).
-        extra["previous_clip"] = _media_path(queue[-1]["id"])
+        # The predecessor is captured here, so the record stays truthful even if the queue is cleared mid-run.
+        previous_id = queue[-1]["id"]
+        extra["previous_clip"] = _media_path(previous_id)
     try:
         router.generate_clip(prompt, req.body, req.move, MEDIA / name, frame=frame, model=engine,
                              **extra)
@@ -104,7 +107,7 @@ def generate_shot(req: ShotRequest) -> dict:
         raise HTTPException(502, str(e)) from e
     shot = {"id": name, "url": f"/media/{name}", "body": req.body, "move": req.move,
             "prompt": prompt, "mode": router.mode, "engine": engine,
-            "continued": "previous_clip" in extra}
+            "continued": previous_id is not None, "continued_from": previous_id}
     queue.append(shot)
     return shot
 

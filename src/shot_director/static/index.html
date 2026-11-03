@@ -174,7 +174,10 @@ $("clear").onclick = async () => { renderQueue((await api("/api/queue", { method
   chips($("bodies"), p.bodies, "body", $("bodyFrag"));
   chips($("moves"), p.moves, "move", $("moveFrag"));
   const engines = (p.engines || []).map((e) => ({ id: e.id, label: `${e.label} (${e.time})`, fragment: `${e.id}: ${e.best_for}` }));
-  state.engine = engines.some((e) => e.id === p.video_model) ? p.video_model : (engines[0] || {}).id;
+  if (p.video_model && !engines.some((e) => e.id === p.video_model)) {
+    engines.unshift({ id: p.video_model, label: p.video_model, fragment: `${p.video_model}: configured default (SHOT_DIRECTOR_VIDEO_MODEL)` });
+  }
+  state.engine = p.video_model || (engines[0] || {}).id;
   chips($("engines"), engines, "engine", $("engineFrag"));
   renderQueue((await api("/api/queue")).shots);
 })().catch((e) => status(e.message, true));

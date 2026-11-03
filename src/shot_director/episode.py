@@ -192,31 +192,77 @@ def plan_episode(headline: str, source: str = "", body: str = "anime",
 # -- rendering ---------------------------------------------------------------------------------
 
 def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_seconds: int) -> dict:
-    """One start frame, then the scene's clips in order; FLUX 3 Video (live) continues clip to clip."""
-    frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
-    router.generate_frame(f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}.", body,
-                          media / frame_name)
-    records, previous = [], None
-    for s in sc["shots"]:
-        prompt = presets.compile_prompt(body, s["move"], s["scene"])
-        name = f"shot-{uuid.uuid4().hex[:8]}.mp4"
-        extra = {}
-        if router.mode == "live" and engine == CONTINUATION_ENGINE and previous:
-            extra["previous_clip"] = media / previous
-        router.generate_clip(prompt, body, s["move"], media / name, frame=media / frame_name,
-                             model=engine, duration=clip_seconds, **extra)
-        records.append({"id": name, "url": f"/media/{name}", "beat": s["beat"], "caption": s["caption"], "body": body,
-                        "move": s["move"], "prompt": prompt, "mode": router.mode, "engine": engine,
-                        "continued": "previous_clip" in extra, "continued_from": previous if extra else None})
-        previous = name
-    return {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
-            "narration": sc["narration"],
-            "frame": {"frame": frame_name, "url": f"/media/{frame_name}"}, "shots": records}
+    """One start frame, then the scene's clips in order; FLUX 3 Video (live) continues clip to clip.
+    Fail-soft: an error stops this scene only; the clips rendered so far are kept and `error` is set."""
+    out = {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
+           "narration": sc["narration"], "frame": None, "shots": [], "error": None}
+    try:
+        frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
+        router.generate_frame(f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}.", body,
+                              media / frame_name)
+        out["frame"] = {"frame": frame_name, "url": f"/media/{frame_name}"}
+        previous = None
+        for s in sc["shots"]:
+            prompt = presets.compile_prompt(body, s["move"], s["scene"])
+            name = f"shot-{uuid.uuid4().hex[:8]}.mp4"
+            extra = {}
+            if router.mode == "live" and engine == CONTINUATION_ENGINE and previous:
+                extra["previous_clip"] = media / previous
+            router.generate_clip(prompt, body, s["move"], media / name, frame=media / frame_name,
+                                 model=engine, duration=clip_seconds, **extra)
+            out["shots"].append({"id": name, "url": f"/media/{name}", "beat": s["beat"],
+                                 "caption": s["caption"], "body": body, "move": s["move"],
+                                 "prompt": prompt, "mode": router.mode, "engine": engine,
+                                 "continued": "previous_clip" in extra,
+                                 "continued_from": previous if extra else None})
+            previous = name
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:400]
+    print(f"[shot-director] scene {sc['index']} ({sc['kind']}): {len(out['shots'])}/{len(sc['shots'])} clips"
+          + (f", FAILED {out['error']}" if out["error"] else ", done"), file=sys.stderr, flush=True)
+    return out
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text[-1:] in ".!?" else f"{text}."
+
+
+def _cut(result: dict, media: Path, epid: str, scenes: list[dict]) -> tuple[Path, dict]:
+    """Build the edit plan (captions, per-scene narration, music bed, whoosh + impact) and assemble the cut."""
+    from . import audio, edit
+    seconds = result["minutes"] * 60 + 15
+    plan = {"title": SERIES_TITLE, "logline": result["logline"], "fps": 24, "size": [1280, 720],
+            "scenes": [], "narration": [],
+            "music": str(p) if (p := audio.music_bed(seconds, media / "music-bed.mp3")) else None,
+            "sfx": []}
+    whoosh = audio.sfx("fast cinematic whoosh transition", media / "sfx-whoosh.mp3", 1.0)
+    impact = audio.sfx("deep punchy anime impact hit", media / "sfx-impact.mp3", 1.0)
+    if whoosh:
+        plan["sfx"].append({"path": str(whoosh), "at": None, "lead": 0.25, "gain": 0.7})
+    if impact:
+        plan["sfx"].append({"path": str(impact), "at": None, "gain": 0.8})
+    for sc in scenes:
+        if not sc["shots"]:
+            continue
+        narr = audio.narrate(sc["narration"], media / f"{epid}-narration-{sc['index']}.mp3")
+        plan["scenes"].append({
+            "beat": sc["kind"], "action": sc["kind"] in ("segment_b", "montage"),
+            "caption": " ".join(_sentence(s["caption"]) for s in sc["shots"]),
+            "clips": [str(media / s["id"]) for s in sc["shots"]],
+            "stills": [str(media / sc["frame"]["frame"])] if sc["frame"] else [],
+            "narration": sc["narration"], "narration_audio": str(narr) if narr else None})
+    out = media / f"{epid}.mp4"
+    edit.assemble(plan, out, audio=True, base=media)
+    report = json.loads(Path(str(out) + ".cuts.json").read_text())
+    return out, {k: report.get(k) for k in ("duration", "shots", "cuts_per_minute", "avg_shot_s", "audio")}
 
 
 def render_episode(plan: dict, router, media: Path, body: str = "anime", engine: str | None = None,
-                   parallel: int = DEFAULT_PARALLEL) -> dict:
-    """Render every scene (scenes in parallel), stitch them in order. Uses its own shot list, not the UI queue."""
+                   parallel: int = DEFAULT_PARALLEL, cut: bool = True) -> dict:
+    """Render every scene (scenes in parallel, a failed scene keeps what it rendered), stitch the raw
+    sequence, then (cut=True) assemble the anime cut with captions, narration, SFX and music.
+    Uses its own shot list, not the UI queue."""
     engine = engine or VIDEO_MODEL
     if engine not in KNOWN_ENGINES:
         raise ValueError(f"unknown engine: {engine}")
@@ -225,10 +271,25 @@ def render_episode(plan: dict, router, media: Path, body: str = "anime", engine:
         scenes = list(pool.map(lambda sc: _render_scene(router, media, sc, body, engine,
                                                         plan["clip_seconds"]), plan["scenes"]))
     shots = [s for sc in scenes for s in sc["shots"]]
-    name = f"episode-{uuid.uuid4().hex[:8]}.mp4"
-    stitch.stitch([media / s["id"] for s in shots], media / name)
-    return {**plan, "scenes": scenes, "shots": shots, "frame": scenes[0]["frame"],
-            "sequence": {"url": f"/media/{name}", "file": name}}
+    if not shots:
+        raise RuntimeError("every scene failed: " + "; ".join(f"scene {sc['index']}: {sc['error']}" for sc in scenes))
+    epid = f"episode-{uuid.uuid4().hex[:8]}"
+    raw = f"{epid}.sequence_raw.mp4"
+    stitch.stitch([media / s["id"] for s in shots], media / raw)
+    result = {**plan, "scenes": scenes, "shots": shots,
+              "frame": next((sc["frame"] for sc in scenes if sc["frame"]), None),
+              "errors": [f"scene {sc['index']}: {sc['error']}" for sc in scenes if sc["error"]],
+              "sequence_raw": {"url": f"/media/{raw}", "file": raw},
+              "sequence": {"url": f"/media/{raw}", "file": raw}, "cut": None}
+    if cut:
+        try:
+            final, report = _cut(result, media, epid, scenes)
+            result["sequence"] = {"url": f"/media/{final.name}", "file": final.name}
+            result["cut"] = report
+        except Exception as e:  # the raw stitch is still a watchable episode
+            result["errors"].append(f"cut: {type(e).__name__}: {e}"[:400])
+            print(f"[shot-director] cut failed, keeping the raw stitch: {e}", file=sys.stderr, flush=True)
+    return result
 
 
 # -- ledger + one production run --------------------------------------------------------------
@@ -290,7 +351,7 @@ def _reserve(media: Path, headline: str, source: str) -> tuple[str, str, str, st
 def produce(router, media: Path, headline: str | None = None, source: str = "",
             engine: str | None = None, body: str = "anime", minutes: float = DEFAULT_MINUTES,
             clip_seconds: int = DEFAULT_CLIP_SECONDS, parallel: int = DEFAULT_PARALLEL,
-            render: bool = True) -> dict:
+            render: bool = True, cut: bool = True) -> dict:
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
     headline = (headline or "").strip()
@@ -313,7 +374,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
     try:
         plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
                             engine=engine)
-        result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel)
+        result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel, cut=cut)
     except BaseException as e:
         _update_ledger(media, entry_id, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:300],
                                          "finished": _now()})
@@ -321,7 +382,9 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
     _update_ledger(media, entry_id, {
         "status": "done", "headline": result["headline"],
         "file": result["sequence"]["file"], "path": str(media / result["sequence"]["file"]),
-        "url": result["sequence"]["url"], "minutes": minutes, "scenes": len(result["scenes"]),
+        "url": result["sequence"]["url"], "raw_file": result["sequence_raw"]["file"],
+        "raw_path": str(media / result["sequence_raw"]["file"]), "cut": result["cut"],
+        "errors": result["errors"], "minutes": minutes, "scenes": len(result["scenes"]),
         "clips": len(result["shots"]), "clip_seconds": result["clip_seconds"],
         "clip_seconds_requested": result["clip_seconds_requested"],
         "engine": result["shots"][0]["engine"], "mode": router.mode,
@@ -384,6 +447,7 @@ def main() -> None:
     ap.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="scenes rendered at once (default 3)")
     ap.add_argument("--mock", action="store_true", help="offline placeholder render, no Router calls")
     ap.add_argument("--out", default=str(ROOT / "media"), help="media dir for frames, clips, episodes and the ledger")
+    ap.add_argument("--no-cut", action="store_true", help="skip the anime cut: the episode is the plain stitch")
     ap.add_argument("--loop", action="store_true", help="keep running: one new episode every --every")
     ap.add_argument("--every", default="60m", help="loop interval, e.g. 60m, 1h, 30s (default 60m)")
     args = ap.parse_args()
@@ -397,7 +461,7 @@ def main() -> None:
     media.mkdir(parents=True, exist_ok=True)
     router = make_router(media)
     opts = dict(engine=args.engine, body=args.body, minutes=args.minutes,
-                clip_seconds=args.clip_seconds, parallel=args.parallel)
+                clip_seconds=args.clip_seconds, parallel=args.parallel, cut=not args.no_cut)
     if args.loop:
         print(f"[shot-director] {router.mode} channel: one episode every {args.every} into {media}",
               file=sys.stderr)
@@ -417,7 +481,8 @@ def main() -> None:
                       "logline": result["logline"], "mode": router.mode,
                       "engine": result["shots"][0]["engine"], "scenes": len(result["scenes"]),
                       "clips": len(result["shots"]), "moves": [s["move"] for s in result["shots"]],
-                      "episode": str(path)}))
+                      "cut": result["cut"], "errors": result["errors"], "episode": str(path),
+                      "raw": str(media / result["sequence_raw"]["file"])}))
 
 
 if __name__ == "__main__":

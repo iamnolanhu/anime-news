@@ -265,6 +265,7 @@ def _sentence(text: str) -> str:
 
 
 def _cut(result: dict, media: Path, epid: str, scenes: list[dict]) -> tuple[Path, dict]:
+    media = Path(media).resolve()  # absolute, so edit.assemble never re-joins a relative base onto media-prefixed paths
     """Build the edit plan (captions, per-scene narration, music bed, whoosh + impact) and assemble the cut."""
     from . import audio, edit
     seconds = result["minutes"] * 60 + 15
@@ -299,6 +300,7 @@ def render_episode(plan: dict, router, media: Path, body: str = "anime", engine:
     """Render every scene (scenes in parallel, a failed scene keeps what it rendered), stitch the raw
     sequence, then (cut=True) assemble the anime cut with captions, narration, SFX and music.
     Uses its own shot list, not the UI queue."""
+    media = Path(media).resolve()
     engine = engine or VIDEO_MODEL
     if engine not in KNOWN_ENGINES:
         raise ValueError(f"unknown engine: {engine}")
@@ -392,6 +394,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
             style_sheet: bool = True) -> dict:
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
+    media = Path(media).resolve()
     headline = (headline or "").strip()
     presets.compile_prompt(body, "static", "")  # validates the body before anything is spent
     if engine and engine not in KNOWN_ENGINES:

@@ -3,6 +3,8 @@ import type { Project } from "./types";
 /** Everything the Studio keeps lives in this browser's localStorage. Nothing is sent to the website. */
 export const KEYS = {
   engineUrl: "anime-news:engine-url",
+  /** "local" when the visitor switched from the shared demo engine to their own. */
+  engineChoice: "anime-news:engine-choice",
   comfyKey: "anime-news:comfy-api-key",
   projects: "anime-news:projects",
   currentProject: "anime-news:current-project",

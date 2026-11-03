@@ -29,16 +29,21 @@ export function HeadlinePanel({
   error,
   hasStoryboard,
   disabled,
+  maxMinutes = 5,
   onSubmit,
 }: {
   busy: boolean;
   error: string | null;
   hasStoryboard: boolean;
   disabled: boolean;
+  /** The shared demo engine's cap; 5 minutes otherwise. */
+  maxMinutes?: number;
   onSubmit: (req: StoryboardRequest) => void;
 }) {
   const [raw, setRaw] = useState("");
-  const [minutes, setMinutes] = useState(1);
+  const [chosenMinutes, setMinutes] = useState(1);
+  const max = Math.max(0.5, maxMinutes);
+  const minutes = Math.min(chosenMinutes, max);
   const req = parseInput(raw, minutes);
   const words = req?.text ? req.text.split(/\s+/).filter(Boolean).length : 0;
 
@@ -83,7 +88,7 @@ export function HeadlinePanel({
               id="minutes"
               type="range"
               min={0.5}
-              max={5}
+              max={max}
               step={0.5}
               value={minutes}
               onChange={(e) => setMinutes(Number(e.target.value))}
@@ -91,7 +96,7 @@ export function HeadlinePanel({
             />
             <div className="meta flex justify-between text-[10px]">
               <span>30 s</span>
-              <span>5 min</span>
+              <span>{minutesLabel(max)}</span>
             </div>
           </div>
           <button type="submit" className="btn-gold" disabled={!req || busy || disabled}>

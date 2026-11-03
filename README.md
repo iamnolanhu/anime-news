@@ -24,11 +24,51 @@ uvx --from "git+https://github.com/iamnolanhu/anime-news#subdirectory=packages/e
 
 Try the Studio without installing anything: [https://anime-news-nine.vercel.app/studio?mock=1](https://anime-news-nine.vercel.app/studio?mock=1) runs a stand-in engine inside the page.
 
+## The Weekly Briefing
+
+The show is **THE WEEKLY BRIEFING**: one episode per week with that week's top headline in each of five topics (AI, crypto,
+politics, tech, markets), signed off "Back next week." `anime-news weekly --week 2026-W44` builds one; `--weeks 2026-W01..2026-W44`
+backfills the year. Details, the manifest shape and the backfill run: [docs/WEEKLY.md](docs/WEEKLY.md).
+
+An hourly self-running channel still exists in the code (`shot-director-episode --loop --every 60m`, or `SHOT_DIRECTOR_AUTO=1`
+on the server). It is optional and off by default; we may turn it on if we get sponsored compute.
+
 ## Your key stays on your machine
 
 You bring a Comfy API key (platform.comfy.org, API Keys). The Studio keeps it in your browser's localStorage and hands it to the engine on `127.0.0.1` (it refuses to send it to any other engine URL); the engine stores it in `~/.anime-news/config.json` with 0600 permissions. Storyboards and videos live in `~/.anime-news/` and in your browser.
 
 The website is static. It never receives your key, your storyboards or your videos: the browser talks to your engine directly, and the engine talks to Comfy Router. The optional "Check with Comfy" button sends the key from your browser straight to `api.comfy.org`. Site analytics (PostHog, with every input masked in replays) never load on localhost.
+
+## Hosted demo
+
+The public site also runs a shared demo engine so visitors can try a render without installing anything or bringing a key. It is capped: 480p, episodes up to 1 minute, a few renders per visitor per day and a daily spend budget for the whole engine. "Use my own local engine" in the Studio switches back to the local flow above, with your own key.
+
+How it works: the site proxies `/engine/*` to the engine from the server side and adds an access value, so the browser only talks to the site, and the engine refuses any request without that value. To run your own hosted demo, set these on the Vercel project (never in the repo):
+
+| Vercel variable | What it is |
+| --- | --- |
+| `ENGINE_UPSTREAM` | The engine's base URL, e.g. `http://<your-box>:8765` |
+| `ENGINE_TOKEN` | The same random value the engine has in `ANIME_NEWS_ACCESS_TOKEN` |
+| `NEXT_PUBLIC_HOSTED_ENGINE` | `1` makes the shared engine the Studio's default |
+
+and run the engine in hosted mode on any box with `ffmpeg` and a Comfy API key (`COMFY_API_KEY`, or `~/.anime-news/config.json`):
+
+```bash
+ANIME_NEWS_HOSTED=1 ANIME_NEWS_ACCESS_TOKEN=<random> anime-news serve --host 0.0.0.0 --port 8765
+```
+
+| Engine variable | Default | What it does |
+| --- | --- | --- |
+| `ANIME_NEWS_HOSTED` | off | `1` turns hosted mode on |
+| `ANIME_NEWS_ACCESS_TOKEN` | none | Required on every request as `x-access-token` or `Authorization: Bearer`; with none set, hosted mode refuses everything |
+| `ANIME_NEWS_DAILY_BUDGET_USD` | `40` | Stop accepting work once today's render estimates plus writer calls reach this |
+| `ANIME_NEWS_IP_RENDERS_PER_DAY` | `3` | Renders per visitor (client IP) per UTC day |
+| `ANIME_NEWS_IP_STORYBOARDS_PER_DAY` | 3 x renders | Storyboards (writer calls) per visitor per day |
+| `ANIME_NEWS_MAX_MINUTES` | `1` | Storyboard length cap; a render may carry up to 2.5 x this many minutes of shots |
+| `ANIME_NEWS_FORCE_QUALITY` | `480p` | Every render uses this quality |
+| `ANIME_NEWS_MAX_PARALLEL_JOBS` | `2` | Renders at once; the rest wait in a queue (`position` in `GET /api/jobs/{id}`) |
+
+In hosted mode `PUT /api/config` answers 403, over-limit requests get 429 with `Retry-After`, `GET /api/health` adds `hosted`, `limits`, `remaining_for_you` and `budget_remaining_usd`, media URLs are site-relative (`/media/...`), and article links are only fetched from public addresses. Usage is kept in `<media>/hosted-usage.json` with client IPs hashed.
 
 ## Architecture
 
@@ -59,13 +99,14 @@ The engine listens on `http://127.0.0.1:8765`. CORS allows the site's origin (`A
 | POST | `/api/render` | `{storyboard, quality?: "480p"\|"720p" (default "480p"), vertical?: bool}` | 202 `{job_id}`; 409 while a render is running |
 | GET | `/api/jobs/{id}` | | `{job_id, status: "queued"\|"rendering"\|"cutting"\|"done"\|"failed", stage, done, total, started, error?, episode?: {id, mp4_url, vertical_url?, duration, shots, cuts_per_minute}}` |
 | DELETE | `/api/jobs/{id}` | | cancels, best effort: `{cancelled: true}` |
+| GET | `/api/weekly` | | the weekly manifest: `{series, updated, weeks: [{week, label, status, published, headlines, mp4_url, vertical_url, poster_url, ...}]}`, newest first ([docs/WEEKLY.md](docs/WEEKLY.md)) |
 | GET | `/api/episodes` | | `{episodes: [{id, headline, created, mp4_url, vertical_url?, duration, shots, quality, cost_estimate?}]}` |
 | GET | `/media/{file}` | | the file (mp4, png, json) |
 
 Storyboard JSON:
 
 ```json
-{ "id": "", "headline": "", "source_text_excerpt": "", "series": "THE HOURLY BRIEFING", "logline": "", "minutes": 1,
+{ "id": "", "headline": "", "source_text_excerpt": "", "series": "THE WEEKLY BRIEFING", "logline": "", "minutes": 1,
   "cast": [{ "id": "", "name": "", "role": "", "look": "", "voice": "" }],
   "scenes": [{ "id": "", "act": "cold_open|setup|escalation|turn|climax|sign_off", "setting": "", "caption": "", "narration": "",
                "shots": [{ "id": "", "kind": "talk|action|still|insert", "cast": [""], "line": "spoken line (optional)", "prompt": "", "move": "", "seconds": 5 }] }] }
@@ -95,3 +136,7 @@ Built for **Open Source Higgsfield: ComfyUI Build Night**, NYC, November 2026.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## Analytics
+
+The public site ships Vercel Web Analytics and Speed Insights (both are enabled on the Vercel project), PostHog (pageviews, page leaves, web vitals, exceptions, session replay with every input masked) and optional Google Analytics 4. For GA4, create a property with a web data stream for the production site URL in your Google account, then set `NEXT_PUBLIC_GA_ID` (the `G-...` id) on Vercel. None of them load on localhost or when their key is unset. `track()` in `apps/web/lib/analytics.ts` lists the funnel events the Studio emits.

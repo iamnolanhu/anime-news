@@ -37,7 +37,7 @@ DEFAULT_PARALLEL = 4         # shots rendered at once (scenes, with continuity=T
 LEDGER_NAME = "episodes.json"
 KNOWN_ENGINES = {e["id"] for e in ENGINES} | {VIDEO_MODEL, "ltx/ltx-2-5-pro"}
 
-SERIES_TITLE = "THE HOURLY BRIEFING"  # our own series name (never theirs)
+SERIES_TITLE = "THE WEEKLY BRIEFING"  # our own series name (never theirs)
 STYLE_LEAD = "2D cel anime frame, drawn animation, not a photograph, not a 3D render"
 _SAFETY = ("Safe for work, no weapons, no gore. No real people, no real faces, no likeness of any "
            "public figure; every character is an original invented archetype")
@@ -58,12 +58,12 @@ _LOGLINES = [
 _SCENES = {
     "single": {
         "setting": "an anime newsroom at night, teal shadows, burnt orange monitor glow",
-        "narration": "Good evening. Tonight: {h}. Experts call it unprecedented. Experts call everything unprecedented. Back in one hour.",
+        "narration": "Good evening. This week: {h}. Experts call it unprecedented. Experts call everything unprecedented. Back next week.",
         "beats": [
             ("cold_open", "crash_zoom", "Extreme close-up of the Anchor's eyes behind round glasses, the title '" + SERIES_TITLE + "' slams across the frame", SERIES_TITLE),
             ("thesis", "dolly_in", "Slow push-in on " + _DESK + "; the monitors all read \"{h}\" as he delivers it as a grave briefing", "Tonight: {short}"),
             ("vignette", "handheld", "Cutaway that literalizes the headline with an absurd oversized prop on a war-room table, invented officials staring at it in silence", "Officials are reviewing the situation."),
-            ("punchline", "static", "Back at the desk: the Anchor stares into the lens, completely deadpan, one monitor glitching on \"{h}\"", "Back in one hour."),
+            ("punchline", "static", "Back at the desk: the Anchor stares into the lens, completely deadpan, one monitor glitching on \"{h}\"", "Back next week."),
         ],
     },
     "cold_open": {
@@ -108,12 +108,12 @@ _SCENES = {
     },
     "sign_off": {
         "setting": "the anime news studio, teal shadows, burnt orange monitor glow",
-        "narration": "That was {h}. It will happen again. We will be here. Back in one hour.",
+        "narration": "That was {h}. It will happen again. We will be here. Back next week.",
         "beats": [
             ("sign_off", "static", _DESK + "; he folds his hands, perfectly deadpan", "That was the news."),
             ("moral", "dolly_in", "Slow push-in as the Anchor delivers one dry closing line, a single monitor behind him still reading \"{h}\"", "It will happen again."),
             ("lights", "crane_up", "Crane up over the desk as the studio lights click off one by one", "We will be here."),
-            ("sting", "dolly_out", "Extreme close-up of the Anchor's eyes pulling back, the card 'NEXT HOUR' appears", "Back in one hour."),
+            ("sting", "dolly_out", "Extreme close-up of the Anchor's eyes pulling back, the card 'NEXT WEEK' appears", "Back next week."),
         ],
     },
 }

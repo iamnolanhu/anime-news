@@ -25,6 +25,7 @@ from .router_client import BASE_URL, CREDITS, load_api_key
 ROOT = Path(__file__).resolve().parents[2]
 CHAT_MODEL = os.environ.get("SHOT_DIRECTOR_CHAT_MODEL", "anthropic/claude-sonnet-5-5")
 CACHE_NAME = "scripts-cache.json"
+SERIES_TITLE = "THE WEEKLY BRIEFING"
 MAX_TOKENS = 4000
 TIMEOUT_SECONDS = 180
 CAPTION_MAX = 40
@@ -189,7 +190,7 @@ def _chat(system: str, user: str, model: str = CHAT_MODEL, max_tokens: int = MAX
 
 
 def write_script(headline: str, source: str, minutes: float, scenes: int, clips_per_scene: list[int],
-                 series_title: str = "THE HOURLY BRIEFING", *, media_dir: Path | None = None,
+                 series_title: str = SERIES_TITLE, *, media_dir: Path | None = None,
                  model: str = CHAT_MODEL) -> dict | None:
     """Headline -> validated script dict, or None (caller falls back to the template planner).
     Cached by (headline, minutes) in <media>/scripts-cache.json; a cached script whose counts no longer
@@ -267,7 +268,7 @@ ACT STRUCTURE (fixed; the user message gives the exact shot slots)
 2. thesis: KUROGANE states the headline as a grave briefing line, then a literal visual.
 3. escalation: VEX reports from the field, the countdown clock appears, things get bigger and dumber.
 4. vignette: a genre pastiche dramatizes the moral; DR. HAKASE explains the conspiracy in one line.
-5. button: KUROGANE's twist line, ending EXACTLY with "Back in one hour."
+5. button: KUROGANE's twist line, ending EXACTLY with "Back next week."
 {callback}
 WRITING RULES
 - Spoken lines: <= {max_words} words, one or two short sentences, punchy, quotable, no stage directions inside the line. Each line must be funny on its own as a subtitle.
@@ -337,17 +338,17 @@ def validate_v2(script: object, slots: list[tuple[str, list[tuple[str, str]]]]) 
     last = out_acts[-1]["shots"][-1]
     if last["kind"] == "talk":   # check the untrimmed line, so a long line is not cut mid-phrase and re-tagged
         full = " ".join(str(acts[-1]["shots"][-1].get("line") or "").split())
-        if full.rstrip(".! ").lower().endswith("back in one hour"):
+        if full.rstrip(".! ").lower().endswith("back next week"):
             last["line"] = last["caption"] = full
-    if last["kind"] == "talk" and not last["line"].rstrip(".! ").lower().endswith("back in one hour"):
-        last["line"] = last["caption"] = f"{last['line'].rstrip()} Back in one hour."
+    if last["kind"] == "talk" and not last["line"].rstrip(".! ").lower().endswith("back next week"):
+        last["line"] = last["caption"] = f"{last['line'].rstrip()} Back next week."
     return {"logline": " ".join(str(script["logline"]).split()),
             "title_card": _clip(str(script["title_card"]).upper(), 30),
             "countdown": _clip(str(script["countdown"]).upper(), 24), "acts": out_acts}
 
 
 def write_script_v2(headline: str, source: str, slots: list[tuple[str, list[tuple[str, str]]]],
-                    series_title: str = "THE HOURLY BRIEFING", *, previous: dict | None = None,
+                    series_title: str = SERIES_TITLE, *, previous: dict | None = None,
                     genre: str = "heist movie", media_dir: Path | None = None,
                     model: str = CHAT_MODEL) -> dict | None:
     """Headline -> validated v2 script (acts of talk/action shots with spoken lines), or None on any failure.

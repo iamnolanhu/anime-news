@@ -39,11 +39,11 @@ WORDMARK_MARK = os.environ.get("SHOT_DIRECTOR_WORDMARK_MARK",
                                str(Path(__file__).parent / "static" / "brand" / "an-mark-small.png"))
 TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
-CLIP_SEG = (1.6, 2.5)      # output seconds of a clip segment (formula: avg shot 1.3-1.8 s, never > 2.5)
-CLIP_SEG_MIN = 1.2
+ACTION_OPEN = 1.5          # the scene's opening action shot establishes (PsyopAnime hooks open on 1.9-2.1 s shots)
+ACTION_SHORT = 0.8         # a shot inside an action run (PsyopAnime action shots 0.6-1.0 s, median 0.64 s)
+ACTION_HOLD = 2.0          # the run's last shot holds and resets the beat (1.5-2.5 s)
+BURST_MIN = 3              # this many consecutive short shots of distinct compositions, from 2+ clips, are a burst
 STILL_SEG = (0.9, 1.3)     # output seconds of a still cutaway
-BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
-BURST_COUNT = 4
 CRT_SEG = (0.5, 0.8)       # CRT monitor insert used as a transition
 SHARP_GATE = 0.4           # skip clip segments whose sharpness < 40 % of the clip's median
 SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
@@ -54,7 +54,6 @@ TALK_WIN = (1.6, 3.0)      # a talk take is shown nearly whole, in 2-3 abutting 
 TALK_PUNCH = 1.3           # punch-in crop on alternate talk windows
 COUNTDOWN_RED = "0xFF2A2A"
 BED_VOLUME = 0.8
-ACTION_WORDS = ("action", "chase", "fight", "escalat", "montage", "burst", "battle", "attack", "clash", "run")
 FONT_CANDIDATES = [
     os.environ.get("SHOT_DIRECTOR_FONT", ""),
     "/System/Library/Fonts/Supplemental/Arial Black.ttf",
@@ -411,7 +410,6 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         break
     for si, scene in enumerate(plan.get("scenes", [])):
         cap = scene["caption"] if "caption" in scene else (scene.get("beat") or "")  # "" = no subtitles
-        action = bool(scene.get("action")) or any(w in str(scene.get("beat", "")).lower() for w in ACTION_WORDS)
         info = profiles[si]
         if scene.get("talk"):   # one continuous take with its own dialogue: no ramp, burst, CRT, black or stills
             clip = next((c for c in (resolve(p) for p in scene.get("clips", [])) if c), None)
@@ -428,21 +426,28 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
         clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
         candidates: list[tuple[float, Seg]] = []
-        # one window per angle (the span between a clip's internal hard cuts): a window never hides a cut (R4)
+        # one window per angle (the span between a clip's internal hard cuts): a window never hides a cut (R4).
+        # Each angle is a composition shown once: the opener establishes (ACTION_OPEN), the next shots are short
+        # (ACTION_SHORT), the run's last one holds (ACTION_HOLD).
+        comps = []
         for clip, src in info.items():
             for k, (a, b) in enumerate(src.angles()):
                 free = [(x, y) for x, y in ledger.free(clip, src.dur) if y > a and x < b]
-                win = pick_window(src, max(a, free[0][0]), min(b, free[0][1]), CLIP_SEG[0], fps) if free else None
-                candidates.append((0.0, Seg("clip", 0, src=clip, start=a, caption=cap, scene=si)))
-                s = candidates[-1][1]
-                s.extra.update(angle=k, sharp_median=round(src.median, 1))
-                if win:
-                    s.start, s.frames = win[0], round(win[1] * fps)
-                    s.extra["src_dur"] = win[1]
-                    s.extra["passes_gate"] = True
-                    candidates[-1] = (src.seg_sharp(*win), s)
-                else:
-                    s.extra["passes_gate"] = False
+                if free:
+                    comps.append((clip, k, max(a, free[0][0]), min(b, free[0][1])))
+        wins = [pick_window(source(c), a, b, ACTION_HOLD, fps) for c, _, a, b in comps]
+        last = max((i for i, w in enumerate(wins) if w), default=-1)
+        for i, ((clip, k, a, b), win) in enumerate(zip(comps, wins)):
+            src = source(clip)
+            if win and i != last:
+                length = ACTION_OPEN if i == next(j for j, w in enumerate(wins) if w) else ACTION_SHORT
+                win = pick_window(src, a, b, length, fps) or (win[0], min(win[1], length))
+            s = Seg("clip", 0, src=clip, start=a, caption=cap, scene=si)
+            s.extra.update(angle=k, sharp_median=round(src.median, 1), passes_gate=bool(win))
+            if win:
+                s.start, s.frames = win[0], round(win[1] * fps)
+                s.extra["src_dur"] = s.frames / fps
+            candidates.append((src.seg_sharp(*win) if win else 0.0, s))
         # sharpness gate applies to every window, the opener included; an angle with no passing window is dropped
         for sh, s in candidates:
             if s.extra["passes_gate"]:
@@ -516,30 +521,12 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         while usable:
             pos = len(body) - 1 if len(ordered) > 1 else len(body)
             body.insert(pos, still_seg())
-        # action beats: a burst of 0.33 s shots from still-unused parts of the clips, before the last shot
-        if action and ordered:
-            burst = []
-            bl = BURST_FRAMES / fps
-            srcs = list(dict.fromkeys(s.src for s in ordered))
-            for b in range(BURST_COUNT):
-                src = srcs[b % len(srcs)]
-                dur, med = info[src].dur, info[src].median
-                spans = [(a, e) for a, e in ledger.free(src, dur) if e - a >= bl]
-                st = None
-                for _ in range(5):   # sharpness gate for burst shots as well; skip the shot if nothing passes
-                    if not spans:
-                        break
-                    a, e = rng.choice(spans)
-                    cand = rng.uniform(a, e - bl)
-                    if seg_sharpness(src, cand, bl) >= max(SHARP_GATE * med, SHARP_FLOOR):
-                        st = cand
-                        break
-                if st is None:
-                    continue
-                ledger.take(src, st, st + bl)
-                burst.append(Seg("clip", BURST_FRAMES, src=src, start=st, caption=cap, scene=si,
-                                 extra={"src_dur": bl, "burst": True}))
-            body = body[:-1] + burst + body[-1:] if len(body) > 1 else body + burst
+        # a burst: BURST_MIN or more consecutive short shots of distinct compositions from 2+ clips (never one
+        # clip rotated); each is the only use of its angle, in storyboard order
+        shorts = ordered[1:-1]
+        if len(shorts) >= BURST_MIN and len({x.src for x in shorts}) >= 2:
+            for x in shorts:
+                x.extra["burst"] = True
         # 1-frame black on hard beats: before the speed ramp and before the scene's last shot
         final: list[Seg] = []
         for i, s in enumerate(body):

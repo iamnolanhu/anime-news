@@ -13,7 +13,15 @@ export const metadata: Metadata = {
   title: { default: "The Weekly Briefing: a week of headlines in, one anime briefing out", template: "%s | Anime News" },
   description:
     "The Weekly Briefing: every week, five headlines, one anime episode. An open-source studio that turns a headline, or a week of them, into a storyboard, renders stills and Seedance shots through Comfy Router, and cuts the episode on your own machine.",
-  icons: { icon: "/brand/an-mark-small.png" },
+  icons: {
+    icon: [
+      { url: "/favicon.ico?v=2", sizes: "any" },
+      { url: "/favicon-32.png?v=2", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192.png?v=2", sizes: "192x192", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico?v=2",
+    apple: [{ url: "/apple-touch-icon.png?v=2", sizes: "180x180", type: "image/png" }],
+  },
   openGraph: {
     title: "Anime News",
     description: "A week of headlines in. One anime briefing out. Open source, runs on your machine.",

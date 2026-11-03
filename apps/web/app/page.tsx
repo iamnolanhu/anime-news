@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CopyCommand } from "@/components/copy-command";
-import { HeroPlayer } from "@/components/hero-player";
-import { episodes, formatDuration, weekHeading, weekLabel } from "@/lib/episodes";
+import { HomeHeroBlock, HomeKicker, HomeTicker } from "@/components/weekly/home-live";
+import { episodes, formatDuration, weekHeading } from "@/lib/episodes";
 import { INSTALL_TOOLS, REPO_URL, UVX_MAKE, UVX_SERVE } from "@/lib/site";
 
 const STEPS = [
@@ -34,23 +34,13 @@ const STEPS = [
 export default function Home() {
   const latest = episodes[0];
   const thisWeek = episodes.filter((e) => e.week === latest.week);
-  const ticker = [...thisWeek, ...thisWeek];
 
   return (
     <>
-      <div className="ticker" role="marquee" aria-label="This week's headlines">
-        <div className="ticker-track py-2">
-          {ticker.map((e, i) => (
-            <span key={`${e.slug}-${i}`} className="flex items-center gap-3 px-6 font-mono text-[11px] uppercase tracking-[0.16em] text-gold-pale">
-              <span className="text-cyan">This week</span>
-              {e.headline}
-            </span>
-          ))}
-        </div>
-      </div>
+      <HomeTicker fallback={thisWeek} />
 
       <section className="mx-auto max-w-[1240px] px-4 pb-16 pt-10 sm:px-6 lg:pt-14">
-        <p className="kicker">The Weekly Briefing / {weekHeading(latest)}</p>
+        <HomeKicker fallback={latest} />
         <h1 className="display mt-5 text-[clamp(3rem,6.6vw,6.4rem)] text-white">
           A week of headlines in.
           <span className="block text-gold [text-shadow:0_0_28px_rgba(245,197,24,.25)]">One anime briefing out.</span>
@@ -66,7 +56,7 @@ export default function Home() {
               <Link href="/studio" className="btn-gold">
                 Open the Studio
               </Link>
-              <Link href="/episodes" className="btn-ghost px-4 py-3">
+              <Link href="/weekly" className="btn-ghost px-4 py-3">
                 Watch the briefings
               </Link>
               <a href={REPO_URL} target="_blank" rel="noreferrer" className="btn-ghost px-4 py-3">
@@ -75,15 +65,7 @@ export default function Home() {
             </div>
           </div>
           <div className="min-w-0 lg:col-span-8">
-            <div className="panel brackets p-2">
-              <HeroPlayer src={latest.video} poster={latest.poster} title={latest.title} />
-            </div>
-            <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <p className="meta">
-                <span className="text-gold">This week's briefing</span> / {weekLabel(latest.week)} / {latest.title} / {formatDuration(latest.duration)} / {latest.shots} shots / 0 reused
-              </p>
-              <p className="meta min-w-0 max-w-full truncate">&ldquo;{latest.headline}&rdquo;</p>
-            </div>
+            <HomeHeroBlock fallback={latest} />
           </div>
         </div>
       </section>
@@ -160,9 +142,9 @@ export default function Home() {
 
       <section className="mx-auto max-w-[1240px] px-4 pt-20 sm:px-6" aria-labelledby="latest">
         <div className="flex items-end justify-between gap-4">
-          <h2 id="latest" className="display text-[clamp(2rem,4vw,3rem)]">Weekly briefings</h2>
+          <h2 id="latest" className="display text-[clamp(2rem,4vw,3rem)]">Specials</h2>
           <Link href="/episodes" className="link-cyan font-mono text-[12px] uppercase tracking-[0.14em]">
-            All weeks
+            All episodes
           </Link>
         </div>
         <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">

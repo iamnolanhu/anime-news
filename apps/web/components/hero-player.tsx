@@ -7,7 +7,7 @@ import { useRef, useState } from "react";
  * iOS Safari only allows audio from inside the user gesture, so unmute + play happen synchronously in the click
  * handler, play() is awaited, and a rejection falls back to muted with a "Tap again" prompt.
  */
-export function HeroPlayer({ src, poster, title }: { src: string; poster: string; title: string }) {
+export function HeroPlayer({ src, poster, title }: { src: string; poster?: string; title: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(true);
   const [retry, setRetry] = useState(false);

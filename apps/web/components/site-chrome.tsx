@@ -36,6 +36,7 @@ export function SiteFooter() {
           </p>
         </div>
         <nav className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] uppercase tracking-[0.14em] text-white/70">
+          <Link href="/weekly" className="hover:text-gold">Weekly</Link>
           <Link href="/episodes" className="hover:text-gold">Episodes</Link>
           <Link href="/studio" className="hover:text-gold">Studio</Link>
           <a href={REPO_URL} target="_blank" rel="noreferrer" className="hover:text-gold">Source</a>

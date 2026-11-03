@@ -215,11 +215,11 @@ export function Studio() {
     <div className="mx-auto max-w-[1100px] space-y-6 px-4 pt-10 sm:px-6 lg:pt-14">
       <header className="mb-10">
         <p className="kicker">Studio {mock ? "/ demo mode" : ""}</p>
-        <h1 className="display mt-3 text-[clamp(3rem,8vw,5.5rem)]">Direct an episode</h1>
+        <h1 className="display mt-3 text-[clamp(3rem,8vw,5.5rem)]">Direct a briefing</h1>
         <p className="mt-4 max-w-2xl text-white/75">
           {hosted
-            ? "The shared demo engine does the work; this page is the remote. Write the storyboard, change anything in it, then render the cut."
-            : "Your engine runs on your computer and does the work; this page is the remote. Write the storyboard, change anything in it, then render the cut."}
+            ? "The shared demo engine does the work; this page is the remote. Give it a headline or a week's worth of headlines, change anything in the storyboard, then render the cut."
+            : "Your engine runs on your computer and does the work; this page is the remote. Give it a headline or a week's worth of headlines, change anything in the storyboard, then render the cut."}
         </p>
       </header>
 

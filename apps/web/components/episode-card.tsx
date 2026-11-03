@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatDuration, type Episode } from "@/lib/episodes";
+import { formatDuration, weekHeading, type Episode } from "@/lib/episodes";
 
 /** One finished episode: player with a 16:9 / 9:16 toggle, the numbers, and a download of the format on screen. */
 export function EpisodeCard({ episode, index }: { episode: Episode; index: number }) {
@@ -15,7 +15,7 @@ export function EpisodeCard({ episode, index }: { episode: Episode; index: numbe
     <article id={episode.slug} className="grid scroll-mt-24 gap-6 border-t border-white/10 pt-8 grid-cols-1 lg:grid-cols-12 lg:gap-10">
       <div className="min-w-0 lg:col-span-4">
         <p className="kicker">
-          Episode {String(index).padStart(2, "0")} / {episode.date}
+          {weekHeading(episode)}
         </p>
         <h2 className="display mt-3 text-[clamp(2.2rem,4.5vw,3.4rem)] text-gold">{episode.title}</h2>
         <p className="mt-3 text-[16px] leading-snug text-white/85">&ldquo;{episode.headline}&rdquo;</p>

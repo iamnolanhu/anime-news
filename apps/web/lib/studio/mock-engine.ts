@@ -24,7 +24,7 @@ function shotsFor(sceneIndex: number, headline: string): Shot[] {
     id: newId("shot"),
     kind,
     cast: kind === "talk" ? [i === 0 && sceneIndex % 2 === 0 ? "anchor" : "reporter"] : [],
-    line: kind === "talk" ? (sceneIndex === 0 ? `Tonight: ${headline}.` : "Sources confirm it is worse than it sounds.") : undefined,
+    line: kind === "talk" ? (sceneIndex === 0 ? `This week: ${headline}.` : "Sources confirm it is worse than it sounds.") : undefined,
     prompt:
       kind === "talk"
         ? "2D cel anime frame, news desk in front of a wall of world-map monitors, the speaker looks straight into the lens"
@@ -45,7 +45,7 @@ function template(headline: string, minutes: number): Storyboard {
       act,
       setting: i % 2 === 0 ? "News desk, night, monitor glow" : "City street, rain, neon signs",
       caption: i === 0 ? headline : `Segment ${i + 1}`,
-      narration: i === 0 ? `Good evening. ${headline}.` : "The situation, our sources say, is developing.",
+      narration: i === 0 ? `Welcome to The Weekly Briefing. ${headline}.` : "The situation, our sources say, is developing.",
       shots: shotsFor(i, headline),
     };
   });

@@ -37,7 +37,7 @@ All tokens live in `:root` at the top of `theme.css`. Change these and nothing e
 | `--sd-gold-line` | `rgba(245,197,24,.28)` | Gold hairline on panels, header, ticker, filled slots |
 | `--sd-gold-wash` | `rgba(245,197,24,.08)` | Fill behind the selected chip |
 | `--sd-on-gold` | `#000000` | Text on gold buttons |
-| `--sd-cyan` | `#19E6FF` | The only secondary: focus ring, links (download / continuation), LIVE badge, rare particle sparks |
+| `--sd-cyan` | `#19E6FF` | The only secondary: focus ring, links (download / continuation), status badge, rare particle sparks |
 | `--sd-error` | `#ff6b6b` | Error status text |
 
 ### Glow, shape, texture
@@ -85,7 +85,7 @@ onto these tokens at the bottom of `:root`, so the layout and the theme never di
 | 60 | Black `#000000` | Page background, inputs, chips, slots, header |
 | 30 | Near-black panels `#0d0d0d` with white text | The seven panels and their text |
 | 10 | Gold | Primary buttons, selected chips, section headings, corner brackets, panel hairlines, wordmark product name, particles |
-| under 2 | Cyan | Focus ring, links, LIVE badge, about 6% of particles |
+| under 2 | Cyan | Focus ring, links, status badge, about 6% of particles |
 
 ## Effects
 
@@ -106,7 +106,7 @@ onto these tokens at the bottom of `:root`, so the layout and the theme never di
 
 ### Filling the ticker
 
-The news feature fills the ticker like this, then removes `hidden`:
+The home page fills the ticker with the current week's headlines, labelled THIS WEEK, like this, then removes `hidden`:
 
 ```html
 <div id="ticker" class="ticker">
@@ -193,7 +193,7 @@ Change tokens only, in `:root` at the top of `theme.css`:
 1. Swap the accent: set `--sd-gold`, `--sd-gold-deep`, `--sd-gold-pale`, then update the alpha versions
    `--sd-gold-line` and `--sd-gold-wash` (same RGB, keep the alphas). A few glow rules repeat gold as
    `rgba(245,197,24,a)`; search for `245, 197, 24` and replace the RGB.
-2. Swap the secondary: `--sd-cyan` (and `25, 230, 255` in the cyan glows and the LIVE badge).
+2. Swap the secondary: `--sd-cyan` (and `25, 230, 255` in the cyan glows and the status badge).
 3. Light or dark base: `--sd-bg`, `--sd-surface`, `--sd-surface-glass`, `--sd-input`, `--sd-text`,
    `--sd-muted`, `--sd-hairline`. Re-check contrast with the table above.
 4. Calmer look: `--sd-scanline-alpha: 0`, `--sd-cut: 0px`, `--sd-cut-sm: 0px`, and `MAX_PARTICLES` in

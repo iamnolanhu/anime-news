@@ -28,7 +28,7 @@ time-backwards, jump cuts, hidden cuts, cuts inside a line).
                        {"kind": "still", "path": "f.png"}]}],
  "narration": [{"text": "...", "at": 0.15, "path": "narr-0.mp3"}],
  "music": "music.mp3",
- "countdown": {"label": "DEADLINE IN", "scene_beat": "escalation"},
+ "countdown": {"label": "MONDAY ENDS IN", "scene_beat": "escalation"},
  "sfx": [{"name": "whoosh.mp3", "at": null, "lead": 0.25, "gain": 0.7},
          {"name": "impact.mp3", "at": 12.5}]}
 ```
@@ -139,7 +139,7 @@ every input in it ended the mix early (loudnorm inside a multi-input graph trunc
 | `sfx(prompt, out, seconds, loop=False)` | `elevenlabs/eleven_sfx_v2` | `{"text", "duration_seconds", "loop", "prompt_influence"}` |
 | `music_bed(seconds, out)` | one `eleven_sfx_v2` call | 22 s loopable "upbeat synthwave anime opening loop", looped with ffmpeg |
 
-**Music source tonight:** the bed is a single 22 s sound-effect generation, looped. A proper music
+**Music source for now:** the bed is a single 22 s sound-effect generation, looped. A proper music
 model is a follow-up.
 
 Calls go to `POST /v2/models/elevenlabs/<model>`. Router answers 200 with the raw MP3 bytes, as the

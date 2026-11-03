@@ -57,7 +57,7 @@ export function HeadlinePanel({
         }}
       >
         <label htmlFor="headline-input" className="label">
-          Headline on the first line. Optional: paste the article text or its link below it.
+          Headline on the first line, or a week's worth of headlines. Optional: paste the article text or its link below it.
         </label>
         <textarea
           id="headline-input"

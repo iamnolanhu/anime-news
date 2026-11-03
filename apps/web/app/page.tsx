@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { CopyCommand } from "@/components/copy-command";
 import { HeroPlayer } from "@/components/hero-player";
-import { episodes, formatDuration } from "@/lib/episodes";
+import { episodes, formatDuration, weekHeading, weekLabel } from "@/lib/episodes";
 import { INSTALL_TOOLS, REPO_URL, UVX_MAKE, UVX_SERVE } from "@/lib/site";
 
 const STEPS = [
   {
     n: "01",
-    title: "Headline",
-    body: "Paste a headline, plus the article text or link if you have it. Pick a length from 30 seconds to 5 minutes.",
+    title: "Headlines",
+    body: "Paste a headline or a week's worth of headlines, plus the article text or link if you have it. Pick a length from 30 seconds to 5 minutes.",
     tech: "you type",
   },
   {
@@ -26,22 +26,23 @@ const STEPS = [
   {
     n: "04",
     title: "Anime cut",
-    body: "About 39 cuts a minute, subtitles, music riser and drop, title card, countdown. No source moment is shown twice. 16:9 and 9:16.",
+    body: "About 39 cuts a minute, subtitles, music riser and drop, title card. No source moment is shown twice. 16:9 and 9:16.",
     tech: "ffmpeg, on your machine",
   },
 ];
 
 export default function Home() {
   const latest = episodes[0];
-  const ticker = [...episodes, ...episodes];
+  const thisWeek = episodes.filter((e) => e.week === latest.week);
+  const ticker = [...thisWeek, ...thisWeek];
 
   return (
     <>
-      <div className="ticker" role="marquee" aria-label="Headlines">
+      <div className="ticker" role="marquee" aria-label="This week's headlines">
         <div className="ticker-track py-2">
           {ticker.map((e, i) => (
             <span key={`${e.slug}-${i}`} className="flex items-center gap-3 px-6 font-mono text-[11px] uppercase tracking-[0.16em] text-gold-pale">
-              <span className="text-cyan">Breaking</span>
+              <span className="text-cyan">This week</span>
               {e.headline}
             </span>
           ))}
@@ -49,24 +50,24 @@ export default function Home() {
       </div>
 
       <section className="mx-auto max-w-[1240px] px-4 pb-16 pt-10 sm:px-6 lg:pt-14">
-        <p className="kicker">Open-source anime news studio</p>
+        <p className="kicker">The Weekly Briefing / {weekHeading(latest)}</p>
         <h1 className="display mt-5 text-[clamp(3rem,6.6vw,6.4rem)] text-white">
-          A headline in.
-          <span className="block text-gold [text-shadow:0_0_28px_rgba(245,197,24,.25)]">An anime news episode out.</span>
+          A week of headlines in.
+          <span className="block text-gold [text-shadow:0_0_28px_rgba(245,197,24,.25)]">One anime briefing out.</span>
         </h1>
         <div className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="min-w-0 lg:col-span-4">
             <div className="rule-gold w-24" />
             <p className="mt-6 text-[16px] leading-relaxed text-white/80">
-              Anime News writes the storyboard, renders a start frame and a Seedance shot for every beat through Comfy Router, and cuts
-              it like a late-night briefing. It runs on your machine with your own Comfy API key.
+              Every week, five headlines, one episode. Anime News writes the storyboard, renders a start frame and a Seedance shot for every
+              beat through Comfy Router, and cuts it like an anime briefing. It runs on your machine with your own Comfy API key.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href="/studio" className="btn-gold">
                 Open the Studio
               </Link>
               <Link href="/episodes" className="btn-ghost px-4 py-3">
-                Watch the episodes
+                Watch the briefings
               </Link>
               <a href={REPO_URL} target="_blank" rel="noreferrer" className="btn-ghost px-4 py-3">
                 Source on GitHub
@@ -79,7 +80,7 @@ export default function Home() {
             </div>
             <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <p className="meta">
-                <span className="text-gold">Now showing</span> / {latest.title} / {formatDuration(latest.duration)} / {latest.shots} shots / 0 reused
+                <span className="text-gold">This week's briefing</span> / {weekLabel(latest.week)} / {latest.title} / {formatDuration(latest.duration)} / {latest.shots} shots / 0 reused
               </p>
               <p className="meta min-w-0 max-w-full truncate">&ldquo;{latest.headline}&rdquo;</p>
             </div>
@@ -93,7 +94,7 @@ export default function Home() {
             [String(latest.shots), "shots in a minute"],
             [String(Math.round(latest.cutsPerMinute)), "cuts per minute"],
             ["0", "reused shots"],
-            ["1", "headline in"],
+            ["5", "headlines per week"],
           ].map(([value, label], i) => (
             <div key={label} className={`flex flex-col-reverse py-7 ${i > 0 ? "md:border-l md:border-white/10 md:pl-8" : ""} ${i % 2 === 1 ? "border-l border-white/10 pl-6 md:pl-8" : ""}`}>
               <dt className="meta">{label}</dt>
@@ -137,7 +138,7 @@ export default function Home() {
               <CopyCommand command={UVX_SERVE} />
             </li>
             <li>
-              <p className="meta mb-1.5">3. Or skip the browser: one headline, one episode</p>
+              <p className="meta mb-1.5">3. Or skip the browser: one headline in, one episode out</p>
               <CopyCommand command={UVX_MAKE} />
             </li>
           </ol>
@@ -155,9 +156,9 @@ export default function Home() {
 
       <section className="mx-auto max-w-[1240px] px-4 pt-20 sm:px-6" aria-labelledby="latest">
         <div className="flex items-end justify-between gap-4">
-          <h2 id="latest" className="display text-[clamp(2rem,4vw,3rem)]">Latest episodes</h2>
+          <h2 id="latest" className="display text-[clamp(2rem,4vw,3rem)]">Weekly briefings</h2>
           <Link href="/episodes" className="link-cyan font-mono text-[12px] uppercase tracking-[0.14em]">
-            All episodes
+            All weeks
           </Link>
         </div>
         <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -168,7 +169,8 @@ export default function Home() {
                 <img src={e.poster} alt="" className="h-full w-full object-cover" />
                 <span className="absolute bottom-2 right-2 bg-black/80 px-1.5 py-0.5 font-mono text-[11px] text-white">{formatDuration(e.duration)}</span>
               </div>
-              <p className="display mt-3 text-[1.5rem] group-hover:text-gold">{e.title}</p>
+              <p className="meta mt-3 text-gold">{weekHeading(e)}</p>
+              <p className="display mt-1 text-[1.5rem] group-hover:text-gold">{e.title}</p>
               <p className="meta mt-1 line-clamp-2">{e.headline}</p>
             </Link>
           ))}

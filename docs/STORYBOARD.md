@@ -22,7 +22,7 @@ storyboard is checked by the same rules as the writer's reply.
     {"id": "s1", "act": "cold_open", "setting": "a dark invented capital at night", "caption": "", "narration": "",
      "shots": [
        {"id": "s1_1", "kind": "action", "cast": [], "prompt": "Extreme close-up of a red countdown clock ...", "move": "crash_zoom", "seconds": 5},
-       {"id": "s1_2", "kind": "talk", "cast": ["anchor"], "line": "Good evening. Tonight: Mondays are gone.", "prompt": "Medium shot of KUROGANE at the desk", "move": "dolly_in", "seconds": 5}
+       {"id": "s1_2", "kind": "talk", "cast": ["anchor"], "line": "Welcome to The Weekly Briefing. This week: Mondays are gone.", "prompt": "Medium shot of KUROGANE at the desk", "move": "dolly_in", "seconds": 5}
      ]}
   ]
 }

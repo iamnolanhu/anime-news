@@ -38,7 +38,27 @@ export type Storyboard = {
   scenes: Scene[];
 };
 
-export type Health = { ok: boolean; version?: string; mode?: "live" | "mock" | string; has_credential?: boolean };
+export type HostedLimits = {
+  daily_budget_usd: number;
+  renders_per_ip_per_day: number;
+  storyboards_per_ip_per_day: number;
+  max_minutes: number;
+  quality: Quality;
+  max_parallel_jobs: number;
+};
+
+export type Health = {
+  ok: boolean;
+  version?: string;
+  mode?: "live" | "mock" | string;
+  has_credential?: boolean;
+  /** Set by the shared demo engine (hosted mode) only. */
+  hosted?: boolean;
+  limits?: HostedLimits;
+  remaining_for_you?: number;
+  storyboards_left_for_you?: number;
+  budget_remaining_usd?: number;
+};
 
 export type StoryboardRequest = { headline: string; text?: string; url?: string; minutes?: number; style?: string };
 
@@ -61,6 +81,8 @@ export type Job = {
   done: number;
   total: number;
   started?: string | number;
+  /** Place in the shared engine's queue while status is "queued". */
+  position?: number;
   error?: string;
   episode?: JobEpisode;
 };

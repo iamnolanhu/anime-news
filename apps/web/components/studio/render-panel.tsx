@@ -15,6 +15,7 @@ export function RenderPanel({
   job,
   error,
   disabled,
+  fixedQuality,
   shots,
   mediaUrl,
   onRender,
@@ -23,12 +24,16 @@ export function RenderPanel({
   job: Job | null;
   error: string | null;
   disabled: boolean;
+  /** Set when the engine renders at one quality only (the shared demo engine). */
+  fixedQuality?: Quality;
   shots: number;
   mediaUrl: (path: string) => string;
   onRender: (quality: Quality, vertical: boolean) => void;
   onCancel: () => void;
 }) {
-  const [quality, setQuality] = useState<Quality>("480p");
+  const [chosenQuality, setQuality] = useState<Quality>("480p");
+  const quality = fixedQuality ?? chosenQuality;
+  const qualities: readonly Quality[] = fixedQuality ? [fixedQuality] : ["480p", "720p"];
   const [vertical, setVertical] = useState(false);
   const running = Boolean(job && !isTerminal(job));
   const pct = job ? (job.status === "done" ? 100 : job.total ? Math.round((job.done / job.total) * 100) : 0) : 0;
@@ -47,7 +52,7 @@ export function RenderPanel({
         <div>
           <span className="label">Quality</span>
           <div role="group" aria-label="Quality" className="flex">
-            {(["480p", "720p"] as const).map((q, i) => (
+            {qualities.map((q, i) => (
               <button key={q} type="button" className={`btn-ghost px-4 py-2 ${i ? "-ml-px" : ""}`} aria-pressed={quality === q} onClick={() => setQuality(q)}>
                 {q}
               </button>
@@ -71,7 +76,11 @@ export function RenderPanel({
           ) : null}
         </div>
       </div>
-      <p className="meta mt-3">480p is cheaper and faster for a first look; 720p is the finished cut. Every shot is rendered fresh; none is reused.</p>
+      <p className="meta mt-3">
+        {fixedQuality
+          ? `The shared demo engine renders at ${fixedQuality}; run your own engine for 720p. Every shot is rendered fresh; none is reused.`
+          : "480p is cheaper and faster for a first look; 720p is the finished cut. Every shot is rendered fresh; none is reused."}
+      </p>
 
       {job ? (
         <div className="mt-5 space-y-2" aria-live="polite">

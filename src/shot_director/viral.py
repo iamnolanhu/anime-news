@@ -177,7 +177,14 @@ def _run_topic(topic: str, days: int) -> list[dict]:
     return [dict(r, _topic=topic) for r in rows if isinstance(r, dict)]
 
 
+# Every text field the engine may return for a post. The somber filter reads all of them, not only the
+# shortened first line used as the title: a post can open clean and turn to a tragedy in its body.
+_TEXT_FIELDS = ("title", "summary", "selftext", "body", "text", "description", "snippet", "content")
+
+
 def _to_item(row: dict) -> dict | None:
+    if _somber(" ".join(str(row.get(k) or "") for k in _TEXT_FIELDS)):
+        return None
     platform = (row.get("source") or "").lower()
     title = _clean_title(row.get("title") or "")
     if len(title) < 25 or title.startswith("@"):
@@ -193,13 +200,26 @@ def _to_item(row: dict) -> dict | None:
             "published": row.get("published_at") or "", "topic": row.get("_topic", ""), "feed": "last30days"}
 
 
-def _fresh(item: dict, hours: int) -> bool:
-    pub = item.get("published") or ""
+def _published(value) -> datetime | None:
+    """Timezone-aware UTC time of a post, or None. Naive values are UTC; a date-only value (what the
+    engine usually emits) is the start of that UTC day, the oldest the post can be, so the window stays
+    strict at the cost of dropping some posts from the boundary day."""
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(value, timezone.utc)
+    text = str(value or "").strip()
+    if not text:
+        return None
     try:
-        day = datetime.fromisoformat(pub[:10]).date()
+        ts = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
-        return True  # undated rows are kept; the engine already windowed them
-    return day >= (datetime.now(timezone.utc) - timedelta(hours=hours)).date()
+        return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+
+
+def _fresh(item: dict, hours: int) -> bool:
+    """True only when the post's time is known and inside the last `hours`; undated posts are dropped."""
+    ts = _published(item.get("published"))
+    return ts is not None and ts >= datetime.now(timezone.utc) - timedelta(hours=hours)
 
 
 def viral_stories(topics: list[str] | None = None, hours: int = 48, limit: int = 10) -> list[dict]:
@@ -214,7 +234,8 @@ def viral_stories(topics: list[str] | None = None, hours: int = 48, limit: int =
     try:
         cached = json.loads(cache.read_text())
         if cached.get("key") == key and time.time() - cached.get("fetched", 0) < CACHE_SECONDS:
-            return [it for it in cached.get("items", []) if not _somber(it["title"])][:limit]
+            return [it for it in cached.get("items", [])
+                    if not _somber(it["title"]) and _fresh(it, hours)][:limit]
     except (OSError, ValueError, AttributeError):
         pass
     days = max(1, -(-hours // 24))

@@ -9,6 +9,7 @@
   var KEY = "shotDirectorStoryboard";
   var el = null, opts = {};
   var sb = load();
+  var pending = {};  // scene id -> shots rendering for it right now (not persisted)
 
   function uid() { return "sc-" + Math.random().toString(36).slice(2, 9); }
   function esc(s) {
@@ -79,7 +80,8 @@
         return Object.assign({}, sh, fresh, { duration: fresh.duration || sh.duration, beat: sh.beat, caption: sh.caption });
       });
     });
-    var cur = current();
+    var waiting = Object.keys(pending).filter(function (k) { return pending[k] > 0; });
+    var cur = sceneById(waiting[0]) || current();  // a just-finished shot belongs to the scene that asked for it
     (shots || []).forEach(function (s) { if (!seen[s.id]) cur.shots.push(Object.assign({}, s)); });
     save();
     render();
@@ -88,8 +90,23 @@
 
   /* shot request -> request with the scene's continuity applied: set + characters lead the prompt,
      and the scene's first start frame is reused when the scene's toggle is on */
-  function prepare(req) {
-    var sc = current(), out = Object.assign({}, req);
+  function sceneById(id) { return id ? sb.scenes.find(function (s) { return s.id === id; }) : null; }
+
+  /* a shot request starts: remember which scene asked, so the shot lands there even if the user
+     switches scenes while it renders; returns that scene id */
+  function begin() {
+    var id = current().id;
+    pending[id] = (pending[id] || 0) + 1;
+    render();
+    return id;
+  }
+  function finish(id) {
+    if (pending[id]) pending[id] -= 1;
+    render();
+  }
+
+  function prepare(req, sceneId) {
+    var sc = sceneById(sceneId) || current(), out = Object.assign({}, req);
     var lead = [sc.set, sc.characters ? "Characters: " + sc.characters : ""].filter(Boolean).join(". ");
     if (lead) out.scene = lead + (req.scene ? ". " + req.scene : "");
     var f = sceneFrame(sc);
@@ -97,8 +114,8 @@
     return out;
   }
 
-  function addShot(shot, beat) {
-    var sc = current();
+  function addShot(shot, beat, sceneId) {
+    var sc = sceneById(sceneId) || current();
     sc.shots = sc.shots.filter(function (s) { return s.id !== shot.id; });
     sc.shots.push(Object.assign({}, shot, { beat: beat || "" }));
     save();
@@ -176,7 +193,11 @@
         cards += cardHtml(sh, n, sc.id);
         prev = sh;
       });
-      if (!sc.shots.length) cards = '<div class="sb-empty">' + (isCur ? "Next shot lands here." : "No shots yet.") + "</div>";
+      for (var w = 0; w < (pending[sc.id] || 0); w++) {
+        cards += (sc.shots.length || w ? '<span class="sb-link"></span>' : "") +
+          '<div class="sb-card sb-pending fx-scanning"><div class="sb-thumb"></div><div class="sb-meta">Rendering for this scene…</div></div>';
+      }
+      if (!sc.shots.length && !pending[sc.id]) cards = '<div class="sb-empty">' + (isCur ? "Next shot lands here." : "No shots yet.") + "</div>";
       var secs = sc.shots.reduce(function (t, s) { return t + (Number(s.duration) || 0); }, 0);
       return '<div class="sb-scene' + (isCur ? " current" : "") + '" data-scene="' + sc.id + '">' +
         '<div class="sb-shead"><span class="sb-sn">' + String(si + 1).padStart(2, "0") + "</span>" +
@@ -186,7 +207,7 @@
         '<label class="sb-check" title="Reuse this scene\'s first start frame as the start frame of every later shot in it">' +
         '<input type="checkbox" data-lock="' + sc.id + '"' + (sc.lockFrame ? " checked" : "") + "> Use scene start frame for every shot</label>" +
         (isCur ? '<span class="sb-cur">current</span>' : '<button class="ghost" data-pick="' + sc.id + '">Shoot here</button>') +
-        (!sc.shots.length && sb.scenes.length > 1 ? '<button class="ghost" data-del="' + sc.id + '" title="Delete empty scene">×</button>' : "") +
+        (!sc.shots.length && !pending[sc.id] && sb.scenes.length > 1 ? '<button class="ghost" data-del="' + sc.id + '" title="Delete empty scene">×</button>' : "") +
         '</div><div class="sb-row">' + cards + "</div></div>";
     }).join("");
     el.innerHTML = head + '<div class="sb-scenes">' + body + "</div>";
@@ -321,5 +342,5 @@
   }
 
   window.storyboard = { init: init, reconcile: reconcile, order: order, ordered: ordered, current: current,
-    prepare: prepare, addShot: addShot, runtime: runtime, exportPage: exportPage, exportHtml: exportHtml, render: render };
+    prepare: prepare, begin: begin, finish: finish, addShot: addShot, runtime: runtime, exportPage: exportPage, exportHtml: exportHtml, render: render };
 })();

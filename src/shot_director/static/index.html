@@ -201,9 +201,14 @@ $("shoot").onclick = (e) => {
   fx("scan", slot, true);
   return busy($("shoot"), `Generating shot with ${state.engine} (live: ~30 s to ~5 min)...`, async () => {
     const beat = $("scene").value;
-    const req = window.storyboard.prepare({ body: state.body, move: state.move, scene: beat, frame: state.frame, engine: state.engine });
-    const shot = await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
-    window.storyboard.addShot(shot, beat);
+    const sceneId = window.storyboard.begin();  // the shot lands in this scene even if the user switches meanwhile
+    try {
+      const req = window.storyboard.prepare({ body: state.body, move: state.move, scene: beat, frame: state.frame, engine: state.engine }, sceneId);
+      const shot = await api("/api/shot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+      window.storyboard.addShot(shot, beat, sceneId);
+    } finally {
+      window.storyboard.finish(sceneId);
+    }
     renderQueue((await api("/api/queue")).shots);
   }).finally(() => fx("scan", slot, false));
 };

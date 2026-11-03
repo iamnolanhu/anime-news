@@ -33,3 +33,5 @@
 .sb-link { flex: 0 0 18px; align-self: center; display: flex; justify-content: center; color: transparent; }
 .sb-link.on { color: var(--sd-cyan, #19E6FF); filter: drop-shadow(0 0 4px rgba(25,230,255,.6)); }
 .sb-empty { font-family: var(--sd-mono, monospace); font-size: 11px; color: var(--sd-muted, #a3a3a3); text-transform: uppercase; letter-spacing: .08em; padding: 14px 4px; }
+.sb-pending { position: relative; overflow: hidden; border-style: dashed; }
+.sb-pending .sb-meta { padding-bottom: 8px; color: var(--sd-gold, #F5C518); }

@@ -55,6 +55,17 @@ MINIMAX_RESOLUTION = "768P"        # 768P | 2K
 MINIMAX_RATIO = "16:9"             # required (not adaptive) when there is no first frame
 
 
+def clamp_duration(model: str | None, seconds: int | None) -> int:
+    """Seconds per clip the engine will actually render: FLUX 3 Video 5-20, MiniMax H3 4-15,
+    LTX 2.5 snapped to its allowed values. None -> the engine's default."""
+    model = model or VIDEO_MODEL
+    if model.startswith("ltx/"):
+        return min(LTX_ALLOWED, key=lambda d: abs(d - seconds)) if seconds else LTX_DURATION
+    if model == "minimax/minimax-h3":
+        return max(4, min(15, seconds)) if seconds else MINIMAX_DURATION
+    return max(5, min(20, seconds)) if seconds else FLUX_VIDEO_DURATION
+
+
 def load_api_key() -> str | None:
     """COMFY_API_KEY from the environment, else from the local secrets file. Never logged."""
     if os.environ.get("SHOT_DIRECTOR_MOCK") == "1":
@@ -199,8 +210,7 @@ class LiveRouter:
                 print(f"[shot-director] {model} is text-to-video only on Router: start frame ignored",
                       file=sys.stderr)
                 self._warned_ltx_frame = True
-            ltx_dur = min(LTX_ALLOWED, key=lambda d: abs(d - duration)) if duration else LTX_DURATION
-            req = {"prompt": prompt, "duration": ltx_dur, "resolution": LTX_RESOLUTION,
+            req = {"prompt": prompt, "duration": clamp_duration(model, duration), "resolution": LTX_RESOLUTION,
                    "fps": LTX_FPS, "generate_audio": False}
             result = self._run_model(model, req)
             # LTX output: {"status": pending|processing|completed|failed, "result": {"video_url"}, "error"}
@@ -209,7 +219,7 @@ class LiveRouter:
             url = self._dig(result, "result", "video_url")
         elif model == "bfl/flux-3-video":
             req = {"prompt": prompt,
-                   "duration": max(5, min(20, duration)) if duration else FLUX_VIDEO_DURATION,
+                   "duration": clamp_duration(model, duration),
                    "resolution": FLUX_VIDEO_RESOLUTION, "aspect_ratio": FLUX_VIDEO_ASPECT_RATIO,
                    "generate_audio": False}
             # Raw base64 (no data: prefix) is accepted for keyframes / start_video.
@@ -225,7 +235,7 @@ class LiveRouter:
         elif model == "minimax/minimax-h3":
             content: list[dict] = [{"type": "text", "text": prompt}]
             req = {"resolution": MINIMAX_RESOLUTION,
-                   "duration": max(4, min(15, duration)) if duration else MINIMAX_DURATION}
+                   "duration": clamp_duration(model, duration)}
             if frame is not None:
                 # image_url.url takes a public URL, mm_file://id, or a data URI.
                 content.append({"type": "image_url", "role": "first_frame",

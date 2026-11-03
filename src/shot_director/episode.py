@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import news, presets, stitch
-from .router_client import CONTINUATION_ENGINE, ENGINES, VIDEO_MODEL
+from .router_client import CONTINUATION_ENGINE, ENGINES, VIDEO_MODEL, clamp_duration
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_HEADLINE = 140
@@ -134,13 +134,14 @@ def _pick(seed: str, options: list, salt: str):
     return options[digest[0] % len(options)]
 
 
-def layout(minutes: float, clip_seconds: int = DEFAULT_CLIP_SECONDS) -> tuple[int, int]:
-    """Minutes -> (scenes, clips per scene). Total clips = ceil(minutes*60 / clip_seconds)."""
+def layout(minutes: float, clip_seconds: int = DEFAULT_CLIP_SECONDS) -> list[int]:
+    """Minutes -> clips per scene. Exactly ceil(minutes*60 / clip_seconds) clips in total: full scenes
+    of MAX_CLIPS_PER_SCENE, the last scene takes the remainder (no padding, no extra paid clips)."""
     if minutes <= 0 or clip_seconds <= 0:
         raise ValueError("minutes and clip_seconds must be positive")
     total = max(1, math.ceil(minutes * 60 / clip_seconds))
-    scenes = math.ceil(total / MAX_CLIPS_PER_SCENE)
-    return scenes, math.ceil(total / scenes)
+    full, rest = divmod(total, MAX_CLIPS_PER_SCENE)
+    return [MAX_CLIPS_PER_SCENE] * full + ([rest] if rest else [])
 
 
 def _scene_kinds(n: int) -> list[str]:
@@ -158,17 +159,21 @@ def _trim(beats: list, count: int) -> list:
 
 
 def plan_episode(headline: str, source: str = "", body: str = "anime",
-                 minutes: float = DEFAULT_MINUTES, clip_seconds: int = DEFAULT_CLIP_SECONDS) -> dict:
-    """Headline -> {headline, source, series, logline, scene, minutes, clip_seconds,
+                 minutes: float = DEFAULT_MINUTES, clip_seconds: int = DEFAULT_CLIP_SECONDS,
+                 engine: str | None = None) -> dict:
+    """Headline -> {headline, source, series, logline, scene, minutes, clip_seconds (effective, after
+    the engine clamps it), clip_seconds_requested, engine,
     scenes: [{index, kind, setting, scene, caption, narration,
               shots: [{beat, move, body, scene, caption}]}], shots: (flat list)}."""
     h = _clean(headline)
     if not h:
         raise ValueError("headline is empty")
-    n_scenes, per_scene = layout(minutes, clip_seconds)
+    engine = engine or VIDEO_MODEL
+    requested, effective = clip_seconds, clamp_duration(engine, clip_seconds)
+    counts = layout(minutes, effective)
     fill = {"h": h, "short": _short(h)}
     scenes = []
-    for i, kind in enumerate(_scene_kinds(n_scenes)):
+    for i, (kind, per_scene) in enumerate(zip(_scene_kinds(len(counts)), counts)):
         tpl = _SCENES[kind]
         shots = [{"beat": beat, "move": move, "body": body, "caption": caption.format(**fill),
                   "scene": f"{STYLE_LEAD}. {tpl['setting'].capitalize()}. {picture.format(**fill)}. {_SAFETY}"}
@@ -179,7 +184,8 @@ def plan_episode(headline: str, source: str = "", body: str = "anime",
                        "shots": shots})
     return {"headline": h, "source": source.strip(), "series": SERIES_TITLE,
             "logline": _pick(h, _LOGLINES, "logline").format(h=h, title=SERIES_TITLE),
-            "scene": scenes[0]["scene"], "minutes": minutes, "clip_seconds": clip_seconds,
+            "scene": scenes[0]["scene"], "minutes": minutes, "engine": engine,
+            "clip_seconds": effective, "clip_seconds_requested": requested,
             "scenes": scenes, "shots": [s for sc in scenes for s in sc["shots"]]}
 
 
@@ -237,12 +243,48 @@ def read_ledger(media: Path) -> list[dict]:
         return []
 
 
+_PICK_LOCK = threading.Lock()  # one pick + reservation at a time (auto thread vs API vs loop)
+
+
+def _write_ledger(media: Path, items: list[dict]) -> None:
+    tmp = media / f".{LEDGER_NAME}.tmp"
+    tmp.write_text(json.dumps(items, indent=1))
+    tmp.replace(media / LEDGER_NAME)
+
+
 def _append_ledger(media: Path, entry: dict) -> None:
     with _LEDGER_LOCK:
-        items = read_ledger(media) + [entry]
-        tmp = media / f".{LEDGER_NAME}.tmp"
-        tmp.write_text(json.dumps(items, indent=1))
-        tmp.replace(media / LEDGER_NAME)
+        _write_ledger(media, read_ledger(media) + [entry])
+
+
+def _update_ledger(media: Path, entry_id: str, fields: dict) -> None:
+    with _LEDGER_LOCK:
+        _write_ledger(media, [{**e, **fields} if e.get("id") == entry_id else e for e in read_ledger(media)])
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _reserve(media: Path, headline: str, source: str) -> tuple[str, str, str, str]:
+    """Under the pick lock: choose the story and write a 'rendering' ledger entry before any paid call.
+    Auto-pick skips every headline already in the ledger (rendering, done or failed); an explicit
+    headline is refused only while another run is rendering it."""
+    with _PICK_LOCK:
+        ledger = read_ledger(media)
+        link = ""
+        if not headline:
+            story = news.top(exclude={e["headline_raw"] for e in ledger if e.get("headline_raw")})
+            if not story:
+                raise LookupError("no acceptable new headline (feeds unreachable, all rendered, or only "
+                                  "stories about deaths/violence): pass a headline")
+            headline, source, link = story["title"], story.get("source", ""), story.get("link", "")
+        elif any(e.get("headline_raw") == headline and e.get("status") == "rendering" for e in ledger):
+            raise LookupError(f"already rendering: {headline}")
+        entry_id = uuid.uuid4().hex[:12]
+        _append_ledger(media, {"id": entry_id, "status": "rendering", "headline_raw": headline,
+                               "source": source, "link": link, "created": _now()})
+    return entry_id, headline, source, link
 
 
 def produce(router, media: Path, headline: str | None = None, source: str = "",
@@ -252,27 +294,38 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
     headline = (headline or "").strip()
-    link = ""
-    if not headline:
-        story = news.top(exclude={e["headline_raw"] for e in read_ledger(media) if e.get("headline_raw")})
-        if not story:
-            raise LookupError("no new trending headline (feeds unreachable or all rendered): pass a headline")
-        headline, source, link = story["title"], story.get("source", ""), story.get("link", "")
     presets.compile_prompt(body, "static", "")  # validates the body before anything is spent
     if engine and engine not in KNOWN_ENGINES:
         raise ValueError(f"unknown engine: {engine}")
-    plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds)
+    if minutes <= 0 or clip_seconds <= 0:
+        raise ValueError("minutes and clip_seconds must be positive")
     if not render:
-        return plan
+        if not headline:
+            story = news.top(exclude={e["headline_raw"] for e in read_ledger(media) if e.get("headline_raw")})
+            if not story:
+                raise LookupError("no acceptable new headline: pass a headline")
+            headline, source = story["title"], story.get("source", "")
+        return plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
+                            engine=engine)
+    media.mkdir(parents=True, exist_ok=True)
+    entry_id, headline, source, link = _reserve(media, headline, source)
     started = time.time()
-    result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel)
-    _append_ledger(media, {
-        "headline": result["headline"], "headline_raw": headline, "source": source, "link": link,
+    try:
+        plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
+                            engine=engine)
+        result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel)
+    except BaseException as e:
+        _update_ledger(media, entry_id, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:300],
+                                         "finished": _now()})
+        raise
+    _update_ledger(media, entry_id, {
+        "status": "done", "headline": result["headline"],
         "file": result["sequence"]["file"], "path": str(media / result["sequence"]["file"]),
         "url": result["sequence"]["url"], "minutes": minutes, "scenes": len(result["scenes"]),
-        "clips": len(result["shots"]), "engine": result["shots"][0]["engine"], "mode": router.mode,
-        "seconds_to_render": round(time.time() - started, 1),
-        "created": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        "clips": len(result["shots"]), "clip_seconds": result["clip_seconds"],
+        "clip_seconds_requested": result["clip_seconds_requested"],
+        "engine": result["shots"][0]["engine"], "mode": router.mode,
+        "seconds_to_render": round(time.time() - started, 1), "finished": _now()})
     return result
 
 

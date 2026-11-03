@@ -84,11 +84,12 @@ _SOMBER = ("dead", "death", "dies", "died", "killed", "deadly", "fatal", "murder
            "child abuse", "funeral", "missing")
 
 
-def top(exclude: set[str] | None = None) -> dict:
-    """The top story that is not somber (first story if all are), skipping titles in `exclude`.
-    {} when no feed answered or every story is excluded."""
-    items = [it for it in trending(10) if it["title"] not in (exclude or set())]
-    for it in items:
+def top(exclude: set[str] | None = None) -> dict | None:
+    """The top story that is not somber and not in `exclude`. None when no feed answered or no
+    acceptable story is left: a somber story is never returned as a fallback."""
+    for it in trending(10):
+        if it["title"] in (exclude or set()):
+            continue
         if not any(w in it["title"].lower() for w in _SOMBER):
             return it
-    return items[0] if items else {}
+    return None

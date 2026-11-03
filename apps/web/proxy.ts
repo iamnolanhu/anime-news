@@ -8,7 +8,8 @@ import { NextResponse, type NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const upstream = process.env.ENGINE_UPSTREAM?.trim().replace(/\/+$/, "");
   const access = process.env.ENGINE_TOKEN?.trim();
-  if (!upstream || !access) {
+  // ENGINE_OFFLINE=1 answers at once instead of waiting on an upstream that no longer exists (the render box was retired 2026-11-03).
+  if (process.env.ENGINE_OFFLINE === "1" || !upstream || !access) {
     const detail = "The shared demo engine is not configured on this deployment.";
     return NextResponse.json({ error: detail, detail }, { status: 503 });
   }

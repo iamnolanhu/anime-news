@@ -1,6 +1,6 @@
 # Anime News
 
-Anime News turns the day's top headline into a short anime news episode, and its studio lets you direct single shots by hand. Live at https://your-site.example. The engine and CLI underneath were built as **Shot Director**, its former working name, so the commands (`shot-director`, `shot-director-episode`, `shot-director-cut`), the Python package and the `SHOT_DIRECTOR_*` variables keep that name. Brand rules: THEME.md, "Brand: Anime News".
+Anime News turns the day's top headline into a short anime news episode, and its studio lets you direct single shots by hand. The engine and CLI underneath were built as **Shot Director**, its former working name, so the commands (`shot-director`, `shot-director-episode`, `shot-director-cut`), the Python package and the `SHOT_DIRECTOR_*` variables keep that name. Brand rules: THEME.md, "Brand: Anime News".
 
 An open-source mini "Cinema Studio": pick a start frame, a camera body and a camera move, and get an AI video shot. Group shots into scenes on a storyboard (up to 12 shots) and stitch them, in scene order, into one sequence.
 
@@ -179,4 +179,4 @@ MIT, see `LICENSE`.
 
 ## Public deploy
 
-Live as Anime News at https://your-site.example; finished episodes at https://your-site.example/episodes (https://your-site.example is an alias). Browsing is open; anything that spends Comfy Router credits needs the access token (`SHOT_DIRECTOR_ACCESS_TOKEN`, sent as `X-Access-Token`). Each token gets 6 episode requests and 60 frame or shot calls per hour (`SHOT_DIRECTOR_EPISODES_PER_HOUR`, `SHOT_DIRECTOR_CALLS_PER_HOUR`). With the variable unset (local dev) nothing changes. The public pages load PostHog (project 530416, `app: shot-director`); it never loads on localhost. Docker image, compose file, redeploy and token rotation: [deploy/README.md](deploy/README.md).
+Public site: ANIME_NEWS_SITE_URL (set by the web app).

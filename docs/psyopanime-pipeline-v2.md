@@ -165,7 +165,7 @@ H3 better for fight choreography, Kling for stable motion. This is vendor/blog e
 | (8) | `kling/kling-3.0-turbo` | i2v, only if cheap |
 Fixed inputs: one FLUX 3 anime still of a talking character with an unambiguous face; prompt "Flat cel-shaded 2D anime, 1990s OVA ink linework... animated on twos, smear frames. The character speaks exactly: '...' (12 words). Slow push-in. No frozen figures." Send the same ElevenLabs line as audio ref where supported.
 Rubric (score 0-5 each, judged by us + a vision model on 16 frames, blind to model name): (a) mouth visibly moves and matches audio, (b) stays 2D cel, no photoreal/3D drift, (c) face/outfit identity holds frame 1 vs 5 s,
-(d) motion has acting (blink, head turn, hair/cloth) not just camera drift, (e) readable at 12 fps posterise, (f) cost and latency per 5 s. Winner = highest (a)+(b)+(d); tie goes to cheaper. Log cost per clip first: abort anything above ~$1 per 5 s without telling Nolan.
+(d) motion has acting (blink, head turn, hair/cloth) not just camera drift, (e) readable at 12 fps posterise, (f) cost and latency per 5 s. Winner = highest (a)+(b)+(d); tie goes to cheaper. Log cost per clip first: abort anything above ~$1 per 5 s without telling the operator.
 Failure modes to watch: Seedance may reframe/change the pose from the still (CinemaDrop); photoreal reference faces refused ~4 in 5 (r/Seedance_AI), anime stills had 0 rejections in Vidney's 38 runs;
 Seedance output is 24 fps and the edit adds the chop; edit mode breaks lip sync (r/Seedance_AI 1 Sep 2026), so use i2v not edit.
 

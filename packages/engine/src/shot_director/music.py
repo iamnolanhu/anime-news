@@ -19,7 +19,7 @@ log = logging.getLogger("shot_director.music")
 BED_PAGE = "https://pixabay.com/music/synthwave-dark-synthwave-624644/"
 BED_CDN = ("https://cdn.pixabay.com/download/audio/2026/10/22/audio_134c1e9286.mp3"
            "?filename=kulakovka-dark-synthwave-624644.mp3")
-PROXY = os.environ.get("AGENT_PROXY", "socks5://10.0.0.1:1080")
+PROXY = os.environ.get("ANIME_NEWS_PROXY", "")   # optional socks5://host:port for the bed download
 CREDITS = ("Bed: \"Dark Synthwave\" by Kulakovka\n"
            f"Source: {BED_PAGE}\nLicense: Pixabay Content License (no attribution required; do not redistribute "
            "the file as-is, so it is kept out of git and fetched by shot_director.music.fetch_kit)\n"
@@ -54,25 +54,24 @@ def music_kit(media_dir) -> dict:
 
 
 def _download_bed(raw: Path) -> bool:
-    """Pixabay's CDN link, through the egress proxy; if the link rots, find the new one via crawl4ai."""
+    """Pixabay's CDN link (optionally through ANIME_NEWS_PROXY). If the link rots, drop any mp3 at
+    <media>/music/bed.mp3 or point ANIME_NEWS_MUSIC_BED at a file or URL."""
+    custom = os.environ.get("ANIME_NEWS_MUSIC_BED", "")
+    if custom and not custom.startswith("http"):
+        src = Path(custom).expanduser()
+        if src.exists() and src.stat().st_size > 100_000:
+            raw.write_bytes(src.read_bytes())
+            return True
+    proxy = ["--socks5-hostname", PROXY.split("//")[-1]] if PROXY else []
     def get(url: str) -> bool:
-        return _run(["curl", "-sfL", "--socks5-hostname", PROXY.split("//")[-1], "-A", "Mozilla/5.0 Chrome/130",
-                     "-e", "https://pixabay.com/", "-o", str(raw), url]) and raw.exists() and raw.stat().st_size > 100_000
+        return _run(["curl", "-sfL", *proxy, "-A", "Mozilla/5.0 Chrome/130", "-e", "https://pixabay.com/",
+                     "-o", str(raw), url]) and raw.exists() and raw.stat().st_size > 100_000
+    if custom.startswith("http") and get(custom):
+        return True
     if get(BED_CDN):
         return True
-    token = os.environ.get("CRAWL4AI_TOKEN")
-    if not token:
-        return False
-    try:
-        req = urllib.request.Request("https://crawler.example/crawl", method="POST",
-                                     data=json.dumps({"urls": [BED_PAGE]}).encode(),
-                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-        html = json.load(urllib.request.urlopen(req, timeout=90))["results"][0].get("html") or ""
-        m = re.search(r"https://cdn\.pixabay\.com/download/audio/[^\"' ]+\.mp3[^\"' ]*", html)
-        return bool(m) and get(m.group(0))
-    except Exception as e:  # fail soft
-        log.warning("music: bed lookup failed: %s", e)
-        return False
+    log.warning("music: bed download failed; put an mp3 at <media>/music/bed.mp3 or set ANIME_NEWS_MUSIC_BED")
+    return False
 
 
 def _intro(bed: Path, impact: Path | None, out: Path) -> bool:

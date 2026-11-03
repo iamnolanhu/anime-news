@@ -7,3 +7,10 @@ media/
 .server.pid
 .server.log
 .DS_Store
+node_modules/
+.next/
+.turbo/
+.vercel/
+media-iter/
+*.pid
+*.log

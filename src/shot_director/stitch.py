@@ -82,3 +82,13 @@ def mock_clip(title: str, subtitle: str, color: str, out: Path, frame: Path | No
         _run([*src, "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-t", str(seconds),
               "-movflags", "+faststart", str(out)])
     return out
+
+
+def add_mock_tone(clip: Path) -> Path:
+    """Give a mock clip a sound track (a pulsing 220 Hz tone standing in for speech), in place."""
+    tmp = clip.with_name(clip.stem + ".tone.mp4")
+    _run(["-i", str(clip), "-f", "lavfi", "-i", "sine=f=220:r=48000", "-filter:a",
+          "volume='0.4*gt(sin(2*PI*t*3),0)':eval=frame", "-map", "0:v", "-map", "1:a", "-c:v", "copy",
+          "-c:a", "aac", "-shortest", "-movflags", "+faststart", str(tmp)])
+    tmp.replace(clip)
+    return clip

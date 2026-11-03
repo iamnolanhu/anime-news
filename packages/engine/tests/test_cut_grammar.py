@@ -5,6 +5,7 @@ whose sound pauses between clauses, stills, a narration line longer than its pic
 Rules are the review's R1-R18 as amended by the PsyopAnime cut log (docs/EDIT.md).
 """
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -360,3 +361,60 @@ def test_writers_never_draw_clocks_and_the_overlay_skips_shots_that_do(media, tm
     plan_segs = edit.plan_segments(plan, tmp_path, media)
     over = {(Path(s.src).stem, bool(s.extra.get("countdown"))) for s in plan_segs if s.kind == "clip"}
     assert over == {("a", True), ("b", False)}
+
+
+NARRATION_PATHS = ["run-still", "run-clip", "after-headline", "talk-only-scene", "free-by-scene", "free-at-time",
+                   "free-default"]
+
+
+def _long_line_plan(media: Path, tmp: Path, path: str) -> dict:
+    """One narrated scene whose line outlasts every picture in it (7 s against at most ~5 s), then a next scene."""
+    line = tmp / "line7.wav"
+    if not line.exists():
+        _ff("-f", "lavfi", "-i", "sine=f=300:d=7:sample_rate=48000", str(line))
+    act = lambda n: {"kind": "action", "clip": str(media / f"{n}.mp4")}   # noqa: E731
+    shots = {"run-still": [{"kind": "still", "path": str(media / "still1.png")}], "run-clip": [act("k")],
+             "after-headline": [{"kind": "still", "path": str(media / "still2.png")}, act("a")],
+             "talk-only-scene": [{"kind": "talk", "clip": str(media / "talk1.mp4"), "line": LINE1}]}.get(path, [act("b")])
+    first = {"beat": "setup", "shots": shots}
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [first, {"beat": "turn", "shots": [act("x")]}]}
+    if path.startswith("free"):
+        item = {"text": "A free-standing line.", "path": str(line),
+                **({"scene": 0} if path == "free-by-scene" else {"at": 0.5} if path == "free-at-time" else {})}
+        plan["narration"] = [item]
+    else:
+        first.update(narration="A long scene line.", narration_audio=str(line))
+        if path == "after-headline":
+            first["headline"] = "A headline"
+    return plan
+
+
+@pytest.mark.parametrize("path", NARRATION_PATHS)
+def test_a_line_outlasting_its_scene_plays_whole_on_every_path(media, tmp_path, path):
+    """R13 on every way a narration line reaches the cut: played == file length, it never overlaps another line, no
+    cut lands in its first 0.8 s, and the next scene starts only after it ends (+0.2 s)."""
+    plan = _long_line_plan(media, tmp_path, path)
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    narr = [v for v in report["voice"] if v["kind"] == "narration"]
+    assert len(narr) == 1 and abs(narr[0]["played"] - narr[0]["file_dur"]) < 1e-3 and narr[0]["file_dur"] > 6.9
+    v = narr[0]
+    next_scene = min(s["at"] for s in report["timeline"] if s["scene"] == 1)
+    assert next_scene >= v["at"] + v["played"] + 0.2 - 1e-3, (path, v, next_scene)
+    for w in report["voice"]:
+        if w is not v:
+            assert w["at"] >= v["at"] + v["played"] - 1e-3 or w["at"] + w["played"] <= v["at"] + 1e-3, (path, v, w)
+    assert metrics(report)["cut_in_first08"] == 0
+
+
+@pytest.mark.parametrize("path", ["talk-only-scene", "free-at-time"])
+def test_the_rendered_line_is_not_trimmed(media, tmp_path, path):
+    """The audio graph plays a narration line whole (no atrim or fade): its tone is heard from start to end."""
+    plan = _long_line_plan(media, tmp_path, path)
+    out = edit.assemble(plan, tmp_path / "cut.mp4", audio=True, base=media)
+    v = next(v for v in json.loads(Path(str(out) + ".cuts.json").read_text())["voice"] if v["kind"] == "narration")
+    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(out), "-vn", "-af",
+                        "silencedetect=noise=-45dB:d=0.05", "-f", "null", "-"], capture_output=True, text=True)
+    quiet = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", p.stderr)]
+    assert not [q for q in quiet if v["at"] + 0.1 < q < v["at"] + v["file_dur"] - 0.1], (v, quiet)
+

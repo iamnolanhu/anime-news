@@ -546,7 +546,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             if headline:
                 # the voice starts on the first cut after the headline when the shots from there can hold it;
                 # else inside the shot that carries the headline, once it is off
-                need = 0.1 + nd + 0.15
+                need = 0.1 + nd + 0.2
                 _extend(run[:1], HEADLINE_S + 0.1, fps)
                 ends = list(itertools.accumulate(sh["len"] for sh in run))
                 k = next((j + 1 for j, e in enumerate(ends[:-1]) if e >= HEADLINE_S + 0.1 - 1e-6), None)
@@ -557,9 +557,9 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                         else len(run) - 1
                     lead = HEADLINE_S - (ends[first - 1] if first else 0.0)
                     run = run[first:]
-            got = _extend(run, lead + 0.1 + nd + 0.15, fps) - lead
+            got = _extend(run, lead + 0.1 + nd + 0.2, fps) - lead
             _first_at_least(run, lead + 0.95, fps)
-            if got < 0.1 + nd + 0.15 - 1e-6:
+            if got < 0.1 + nd + 0.2 - 1e-6:
                 log.warning("scene %d: narration %.2fs outlasts its pictures (%.2fs): the last one holds", si, nd, got)
                 _hold_last(run, lead + 0.1 + nd + 0.2, fps)
             voices.append({"kind": "narration", "path": narr, "start": 0.0, "dur": nd,
@@ -632,30 +632,35 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                     seg.extra["clock"] = True   # draws its own clock: no countdown overlay on it
                 sh["seg"] = seg
                 body.append(seg)
+        if narr and not runs:   # a scene of talk takes only: the line follows the last take, on its held last frame
+            nd = _duration(narr)
+            voices.append({"kind": "narration", "path": narr, "start": 0.0, "dur": nd, "file_dur": nd,
+                           "text": scene.get("narration") or "", "anchor": body[-1],
+                           "offset": body[-1].frames / fps + 0.1})
         for v in voices + headlines:   # anchors that are shot records become their segments
             if isinstance(v["anchor"], dict):
                 v["anchor"] = v["anchor"]["seg"]
         segs += body
     segs.append(Seg("end", frames(END_FRAMES_S)))
-    t = 0.0
-    for s in segs:
-        s.at = round(t, 4)
-        t += s.frames / fps
-    starts = {}
-    for s in segs:
-        starts.setdefault(s.scene, s.at)
     for item in plan.get("narration") or []:   # free-standing lines: at `at`, else at their scene, else at 0.15 s
         p = resolve(item.get("path") or "")
-        sc = item.get("scene", -1)
-        if not p or (sc is not None and sc >= 0 and sc not in starts):
-            continue   # the scene was skipped by the gate: its line is dropped, never played over another scene
-        at = float(item["at"]) if item.get("at") is not None else (starts[sc] + 0.1 if sc is not None and sc >= 0 else 0.15)
-        nd = _duration(p)
-        voices.append({"kind": "narration", "path": p, "start": 0.0, "dur": nd,   # never trimmed (R13)
-                       "file_dur": nd, "text": item.get("text") or "", "at": round(at, 4)})
+        if not p:
+            continue
+        nd, sc = _duration(p), item.get("scene", -1)
+        v = {"kind": "narration", "path": p, "start": 0.0, "dur": nd, "file_dur": nd, "text": item.get("text") or ""}
+        if item.get("at") is not None:
+            v["fixed_at"] = float(item["at"])
+        elif sc is not None and sc >= 0:
+            first = next((x for x in segs if x.scene == sc), None)
+            if first is None:
+                continue   # the scene was skipped by the gate: its line is dropped, never played over another scene
+            v["anchor"], v["offset"] = first, 0.1
+        else:
+            v["fixed_at"] = 0.15
+        voices.append(v)
+    _settle(segs, voices, fps)
     for v in voices:
-        if "anchor" in v:
-            v["at"] = round(v.pop("anchor").at + v.pop("offset"), 4)
+        v.pop("anchor", None), v.pop("offset", None), v.pop("fixed_at", None)
     voices.sort(key=lambda v: v["at"])
     for h in headlines:
         h["at"], h["dur"] = round(h.pop("anchor").at, 4), HEADLINE_S
@@ -666,6 +671,54 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     plan_segments.voice = voices
     plan_segments.headlines = headlines
     return segs
+
+
+def _grow(seg: Seg, sec: float, fps: int) -> None:
+    """Make a segment `sec` longer: a still holds longer; a clip (a talk take too) holds its last frame."""
+    n = max(1, math.ceil(sec * fps - 1e-6))
+    if seg.kind == "clip":
+        seg.extra["freeze"] = round(seg.extra.get("freeze", 0.0) + n / fps, 4)
+    seg.frames += n
+
+
+def _settle(segs: list[Seg], voices: list[dict], fps: int) -> None:
+    """Lay out the timeline and place every voice (`anchor` segment + `offset`, or `fixed_at`), then guarantee, for
+    every narration line whatever placed it: it ends 0.2 s before the next line starts and before its scene ends
+    (R13: never cut off, never over another line, the next scene starts after it). A picture that is too short grows (a still holds
+    longer, a clip holds its last frame) and the layout is redone until nothing moves."""
+    for _ in range(100):
+        t = 0.0
+        for s in segs:
+            s.at = round(t, 4)
+            t += s.frames / fps
+        for v in voices:
+            v["at"] = round(v["fixed_at"] if "fixed_at" in v else v["anchor"].at + v["offset"], 4)
+        content = [s for s in segs if s.kind != "end"]
+        grew = False
+        for v in sorted((v for v in voices if v["kind"] == "narration"), key=lambda v: v["at"]):
+            if not content:
+                break
+            at, end = v["at"], v["at"] + v["dur"]
+            under = next((s for s in content if s.at - 1e-6 <= at < s.at + s.frames / fps), None)
+            home = v["anchor"] if "anchor" in v else (under or content[-1])
+            scene = [s for s in content if s.scene == home.scene]
+            # the line must end before its scene does and before the next line that growing a picture can move (one
+            # anchored to a later picture; a line at a fixed time is where the plan put it)
+            index = {id(s): i for i, s in enumerate(segs)}
+            limit, grow, need = scene[-1].at + scene[-1].frames / fps, scene[-1], end + 0.2
+            for w in sorted((w for w in voices if w is not v and "anchor" in w and w["at"] > at + 1e-6),
+                            key=lambda w: w["at"]):
+                before = [s for s in scene if s.at < w["at"] - 1e-6 and index[id(s)] < index[id(w["anchor"])]]
+                if w["at"] < limit and before:
+                    limit, grow = w["at"], before[-1]
+                break
+            if need > limit + 1e-6:
+                _grow(grow, need - limit, fps)
+                grew = True
+                break
+        if not grew:
+            return
+    log.warning("lines did not settle after 100 passes")
 
 
 def _captions(segs: list[Seg], voices: list[dict], fps: int) -> None:
@@ -965,8 +1018,7 @@ def _audio_graph(plan: dict, segs: list[Seg], voices: list[dict], total: float, 
     for v in voices:
         if v["kind"] == "narration":
             line = _line_wav(v["path"], work / f"line-{len(voice.outs)}.wav")
-            fade = f",afade=t=out:st={max(0.0, v['dur'] - 0.25):.3f}:d=0.25" if v["dur"] < v["file_dur"] - 0.05 else ""
-            chain = f"{stereo},atrim=0:{v['dur']:.3f}{fade}"
+            chain = stereo   # played whole: never trimmed or faded (R13)
             n_narr += 1
         elif _has_audio(v["path"]):
             line = _line_wav(v["path"], work / f"line-{len(voice.outs)}.wav", v["start"], v["dur"])

@@ -1,10 +1,12 @@
 """Anime-paced cut: turn generated clips + stills into a fast, captioned, scored edit with ffmpeg only.
 
-`assemble(plan, out)` -> out. Rules (see docs/EDIT.md, tuned to docs/psyopanime-formula.md): every clip
-is chopped into 2-3 segments of 1.3-2.1 s from different parts of the clip (0.33 s bursts in action
-beats), stills become 0.8-1.2 s Ken Burns / shake cutaways, cold open = title over the strongest frame,
-each scene opens on its strongest frame, 2-frame white flash on beats, 1-frame black on hard beats,
-an occasional CRT-monitor insert as a transition, one speed ramp per scene, yellow-on-dark subtitles
+`assemble(plan, out)` -> out. Rules (see docs/EDIT.md, tuned to docs/psyopanime-formula.md): every source
+moment is on screen at most once (clip windows of one file never overlap, each still is used once, no
+freeze frames). Every clip is chopped into up to 3 disjoint windows of 1.45-2.5 s (0.33 s bursts in action
+beats, from still-unused source), stills become 0.9-1.3 s Ken Burns / shake cutaways, cold open = title over
+the strongest frame, each scene opens on its strongest window, 2-frame white flash on beats, 1-frame black
+on hard beats, every other scene opens on one of its own windows in a CRT monitor, one speed ramp per
+scene, yellow-on-dark subtitles
 one clause per cut, a small gold wordmark top-left, end card. Audio: narration,
 ducked music bed, SFX hits on scene changes, loudnorm; a silent track when nothing is given.
 No generation happens here; audio.py makes the sound files.
@@ -33,6 +35,8 @@ TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
 CLIP_SEG = (1.6, 2.5)      # output seconds of a clip segment (formula: avg shot 1.3-1.8 s, never > 2.5)
 CLIP_SEG_MIN = 1.2
+CLIP_WIN_MIN = 1.45       # a clip holds as many disjoint windows of >= this as fit (5 s -> 3)
+MAX_WINDOWS = 3
 STILL_SEG = (0.9, 1.3)     # output seconds of a still cutaway
 BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
 BURST_COUNT = 4
@@ -159,6 +163,84 @@ def _q(path: Path | str) -> str:
 
 
 # ---------------------------------------------------------------- planning
+class SourceLedger:
+    """Source seconds already on screen, per clip file. Every window of a file must be disjoint from the
+    others, so no moment of a clip is shown twice."""
+
+    def __init__(self) -> None:
+        self.used: dict[str, list[tuple[float, float]]] = {}
+
+    def take(self, src: str, a: float, b: float) -> None:
+        self.used.setdefault(src, []).append((a, b))
+
+    def release(self, src: str, a: float, b: float) -> None:
+        spans = self.used.get(src, [])
+        if (a, b) in spans:
+            spans.remove((a, b))
+
+    def free(self, src: str, dur: float) -> list[tuple[float, float]]:
+        """Unused source intervals of `src` inside [0, dur - 0.05]."""
+        out, t = [], 0.0
+        for a, b in sorted(self.used.get(src, [])):
+            if a > t + 1e-6:
+                out.append((t, min(a, dur - 0.05)))
+            t = max(t, b)
+        if dur - 0.05 > t + 1e-6:
+            out.append((t, dur - 0.05))
+        return [(a, b) for a, b in out if b - a > 1e-6]
+
+    def room_after(self, src: str, t: float, dur: float) -> float:
+        """Free source seconds from `t` to the next used window (or the clip's end)."""
+        nxt = [a for a, _ in self.used.get(src, []) if a >= t - 1e-6]
+        return max(0.0, min([dur - 0.05] + nxt) - t)
+
+
+def _windows(free: list[tuple[float, float]], fps: int, rng: random.Random, t_best: float,
+             hold: float = 0.0) -> list[tuple[float, float]]:
+    """Disjoint (start, length) windows inside the free source intervals. Each interval holds as many
+    slots of at least CLIP_WIN_MIN as fit (a 5 s clip: 3 slots of about 1.65 s), at most MAX_WINDOWS
+    spread over the clip; each window is CLIP_SEG long or its slot, whichever is shorter, in whole
+    frames. The window whose slot holds the strongest frame snaps to it, inside its slot only.
+    `hold` keeps a strip at the end of the longest interval free (burst shots in action beats)."""
+    free = list(free)
+    if hold and free:
+        i = max(range(len(free)), key=lambda j: free[j][1] - free[j][0])
+        if free[i][1] - free[i][0] > hold + CLIP_SEG_MIN:
+            free[i] = (free[i][0], free[i][1] - hold)
+    slots: list[tuple[float, float]] = []
+    for a, b in free:
+        n = int((b - a) // CLIP_WIN_MIN) or (1 if b - a >= CLIP_SEG_MIN else 0)
+        slots += [(a + i * (b - a) / n, (b - a) / n) for i in range(n)]
+    if not slots and free:   # a very short clip: one window over its longest free run
+        a, b = max(free, key=lambda x: x[1] - x[0])
+        if b - a >= 0.5:
+            slots = [(a, b - a)]
+    if len(slots) > MAX_WINDOWS:
+        slots = [slots[round(j * (len(slots) - 1) / (MAX_WINDOWS - 1))] for j in range(MAX_WINDOWS)]
+    out = []
+    for j, (a, w) in enumerate(slots):
+        n = max(1, int(min(rng.uniform(*CLIP_SEG), w) * fps + 1e-6))
+        length = min(n / fps, w)
+        frac = j / (len(slots) - 1) if len(slots) > 1 else 0.0
+        out.append([a + (w - length) * frac, length, a, w])
+    if out:
+        near = min(out, key=lambda x: 0.0 if x[2] <= t_best <= x[2] + x[3] else abs(x[0] + x[1] / 2 - t_best))
+        near[0] = min(max(near[2], t_best - 0.1), near[2] + near[3] - near[1])
+    return [(st, length) for st, length, _, _ in out]
+
+
+def _still_items(scene: dict, abs_path, resolve) -> list[tuple[str, str | None]]:
+    """(resolved still path, clip it is the start frame of, or None). A still is a path or
+    {"path": ..., "start_frame_of": "<clip path>"}."""
+    out = []
+    for item in scene.get("stills", []):
+        path, of = (item.get("path"), item.get("start_frame_of")) if isinstance(item, dict) else (item, None)
+        r = resolve(path) if path else None
+        if r:
+            out.append((r, abs_path(of) if of else None))
+    return out
+
+
 def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     fps = int(plan.get("fps", 24))
     rng = random.Random(plan.get("seed", 7))
@@ -166,44 +248,49 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     def frames(sec: float) -> int:
         return max(1, round(sec * fps))
 
-    def resolve(p: str) -> str | None:
+    def abs_path(p: str) -> str:
         pp = Path(p)
-        pp = pp if pp.is_absolute() else base / pp
-        return str(pp) if pp.exists() else None
+        return str(pp if pp.is_absolute() else base / pp)
+
+    def resolve(p: str) -> str | None:
+        return abs_path(p) if Path(abs_path(p)).exists() else None
 
     gated: list[dict] = []
+    ledger = SourceLedger()
+    used_stills: set[str] = set()
     title = Seg("title", frames(TITLE_FRAMES_S))
     segs: list[Seg] = [title]
-    best_open: tuple[int, str, float] | None = None
+    # profile every clip first: the cold open takes the episode's strongest moment before any scene does
+    profiles: list[dict[str, tuple[float, float, float, float]]] = []   # clip -> (dur, t_best, score, median)
+    for scene in plan.get("scenes", []):
+        info: dict[str, tuple[float, float, float, float]] = {}
+        for clip in (resolve(p) for p in scene.get("clips", [])):
+            if clip and clip not in info:
+                dur = _duration(clip)
+                if dur > 0.5:
+                    info[clip] = (dur, *clip_profile(clip, dur))
+        profiles.append(info)
+    best = max(((v[2], c, v[1], v[0]) for info in profiles for c, v in info.items()), default=None)
+    span = title.frames / fps
+    if best and best[3] - 0.05 >= span:   # cold open: title over the strongest frame in the whole episode
+        _, clip, t, dur = best
+        title.src, title.start = clip, min(max(0.0, t - 0.2), dur - 0.05 - span)
+        title.extra["src_dur"] = span
+        ledger.take(clip, title.start, title.start + span)
     for si, scene in enumerate(plan.get("scenes", [])):
         cap = scene.get("caption") or scene.get("beat") or ""
         action = bool(scene.get("action")) or any(w in str(scene.get("beat", "")).lower() for w in ACTION_WORDS)
-        clips = [c for c in (resolve(p) for p in scene.get("clips", [])) if c]
-        stills = [s for s in (resolve(p) for p in scene.get("stills", [])) if s]
+        info = profiles[si]
+        stills = _still_items(scene, abs_path, resolve)
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
         clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
         candidates: list[tuple[float, Seg]] = []
-        freeze_src: list[tuple[str, float]] = []
-        for clip in clips:
-            dur = _duration(clip)
-            if dur <= 0.5:
-                continue
-            t_best, score, med = clip_profile(clip, dur)
-            freeze_src.append((clip, t_best))
-            if best_open is None or score > best_open[0]:
-                best_open = (score, clip, t_best)
-            k = 3 if dur >= 4.2 else 2 if dur >= 2.8 else 1
-            lens = [min(rng.uniform(*CLIP_SEG), dur - 0.05) for _ in range(k)]
-            if k == 1:
-                lens = [max(min(dur - 0.05, CLIP_SEG[1]), min(CLIP_SEG_MIN, dur))]
-            # windows spread across the clip; the one nearest the strongest frame snaps to it
-            starts = [((dur - lens[j]) * j / (k - 1)) if k > 1 else 0.0 for j in range(k)]
-            near = min(range(k), key=lambda j: abs(starts[j] + lens[j] / 2 - t_best))
-            starts[near] = min(max(0.0, t_best - 0.1), dur - lens[near])
-            for j in range(k):
-                s = Seg("clip", frames(lens[j]), src=clip, start=starts[j], caption=cap, scene=si)
-                s.extra["src_dur"] = lens[j]
-                sh = seg_sharpness(clip, starts[j], lens[j])
+        hold = BURST_FRAMES / fps + 0.05 if action else 0.0
+        for clip, (dur, t_best, _score, med) in info.items():
+            for start, length in _windows(ledger.free(clip, dur), fps, rng, t_best, hold):
+                s = Seg("clip", round(length * fps), src=clip, start=start, caption=cap, scene=si)
+                s.extra["src_dur"] = length
+                sh = seg_sharpness(clip, start, length)
                 s.extra["sharp"], s.extra["sharp_median"] = round(sh, 1), round(med, 1)
                 s.extra["passes_gate"] = sh >= SHARP_GATE * med
                 candidates.append((sh, s))
@@ -224,7 +311,11 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             s.extra["gate_exception"] = True
             log.warning("scene %d: no clip window passes the sharpness gate and no stills; opening on "
                         "the sharpest anyway (%s @ %.2fs, sharpness %.0f)", si, Path(s.src).name, s.start, sh)
-        if not clip_segs and not stills:
+        for _, s in clip_segs:   # these windows are now on screen: nothing else may show them
+            ledger.take(s.src, s.start, s.start + s.extra["src_dur"])
+        # a start frame is its clip's first moment: with clip footage on screen it would show it twice
+        usable = list(dict.fromkeys(p for p, of in stills if p not in used_stills and not (clip_segs and of in info)))
+        if not clip_segs and not usable:
             continue
         # the sharpest gate-passing window opens the scene; the rest round-robin across the clips
         clip_segs.sort(key=lambda x: -x[0])
@@ -251,71 +342,78 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if ordered:
             ramp = ordered[1] if len(ordered) > 1 else ordered[0]
             speed = 1.4 if si % 2 == 0 else 0.7
-            dur = _duration(ramp.src)
+            dur = info[ramp.src][0]
             # keep the gated window's start (moving it back could pull in smeared frames); a speed-up
-            # that would run past the clip's end shortens the shot instead
-            src_dur = min(ramp.frames / fps / speed, dur - 0.05 - ramp.start)
-            if src_dur * speed >= 0.6:
-                ramp.speed = speed
-                ramp.extra["src_dur"] = src_dur
-                ramp.frames = frames(src_dur * speed)
+            # may only run on into unused source, else it shortens the shot instead
+            ledger.release(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
+            src_dur = min(ramp.frames / fps / speed, ledger.room_after(ramp.src, ramp.start, dur))
+            n = int(src_dur * speed * fps + 1e-6)
+            if n / fps >= 0.6:
+                ramp.speed, ramp.frames = speed, n
+                ramp.extra["src_dur"] = n / fps / speed
                 ramp.extra["ramp"] = True
-        # still pool: given stills first, then freeze frames from the clips' strongest moments
-        pool = list(stills)
-        for clip, t in freeze_src:
-            png = workdir / f"freeze-{si}-{len(pool)}.png"
-            _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", clip, "-frames:v", "1", str(png)])
-            pool.append(str(png))
+            ledger.take(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
+        # CRT-monitor transition into every other scene: one of the scene's own windows gets the CRT
+        # treatment (never the opener, the ramp or the closing shot), so it adds no repeated footage
+        if si % 2 == 1:
+            pick = [s for s in ordered[1:-1] if not s.extra.get("ramp")]
+            if pick:
+                c = pick[0]
+                ledger.release(c.src, c.start, c.start + c.extra["src_dur"])
+                c.kind, c.motion = "crt", ""
+                c.frames = min(c.frames, frames(rng.uniform(*CRT_SEG)))
+                c.extra["src_dur"] = c.frames / fps
+                ledger.take(c.src, c.start, c.start + c.extra["src_dur"])
         motions = ["push", "shake", "pull"]
         body: list[Seg] = []
         n_still = 0
 
-        def still_seg(src: str) -> Seg:
+        def still_seg() -> Seg:
             nonlocal n_still
             n_still += 1
+            src = usable.pop(0)
+            used_stills.add(src)   # every still is on screen at most once in the whole cut
             return Seg("still", frames(rng.uniform(*STILL_SEG)), src=src,
                        motion=motions[(n_still - 1 + si) % 3], caption=cap, scene=si)
 
         for idx, cs in enumerate(ordered):
             body.append(cs)
             # alternate clip / still / clip: a cutaway after clip segments 0, 2, 4 ...
-            if idx % 2 == 0 and idx < len(ordered) - 1 and pool:
-                body.append(still_seg(pool[n_still % len(pool)]))
-        if ordered:
-            # every supplied still is used at least once, even in a one-clip scene: the leftovers go
-            # before the last clip segment (or after the only one)
-            left = [p for p in stills if p not in {b.src for b in body}]
-            for p in left:
-                pos = len(body) - 1 if len(ordered) > 1 else len(body)
-                body.insert(pos, still_seg(p))
-        else:   # stills-only scene: a montage of every supplied still
-            for p in pool:
-                body.append(still_seg(p))
-        # action beats: a burst of 0.33 s shots from scattered parts of the clips, before the last shot
+            if idx % 2 == 0 and idx < len(ordered) - 1 and usable:
+                body.append(still_seg())
+        # the leftover stills go before the last clip segment (or after the only one); a scene
+        # without usable clip windows becomes a montage of its stills
+        while usable:
+            pos = len(body) - 1 if len(ordered) > 1 else len(body)
+            body.insert(pos, still_seg())
+        # action beats: a burst of 0.33 s shots from still-unused parts of the clips, before the last shot
         if action and ordered:
             burst = []
+            bl = BURST_FRAMES / fps
+            srcs = list(dict.fromkeys(s.src for s in ordered))
             for b in range(BURST_COUNT):
-                src = ordered[b % len(ordered)].src
-                d = _duration(src)
-                floor = SHARP_GATE * ordered[b % len(ordered)].extra.get("sharp_median", 0)
+                src = srcs[b % len(srcs)]
+                dur, _, _, med = info[src]
+                spans = [(a, e) for a, e in ledger.free(src, dur) if e - a >= bl]
                 st = None
                 for _ in range(5):   # sharpness gate for burst shots as well; skip the shot if nothing passes
-                    cand = rng.uniform(0.0, max(0.0, d - BURST_FRAMES / fps - 0.1))
-                    if seg_sharpness(src, cand, BURST_FRAMES / fps) >= floor:
+                    if not spans:
+                        break
+                    a, e = rng.choice(spans)
+                    cand = rng.uniform(a, e - bl)
+                    if seg_sharpness(src, cand, bl) >= SHARP_GATE * med:
                         st = cand
                         break
                 if st is None:
                     continue
+                ledger.take(src, st, st + bl)
                 burst.append(Seg("clip", BURST_FRAMES, src=src, start=st, caption=cap, scene=si,
-                                 extra={"src_dur": BURST_FRAMES / fps, "burst": True}))
+                                 extra={"src_dur": bl, "burst": True}))
             body = body[:-1] + burst + body[-1:] if len(body) > 1 else body + burst
-        # occasional CRT-monitor insert as the transition into every other scene
-        if si % 2 == 1 and ordered:
-            src = ordered[-1].src
-            n_crt = frames(rng.uniform(*CRT_SEG))
-            d = _duration(src)
-            body.insert(0, Seg("crt", n_crt, src=src, start=min(ordered[-1].start, max(0.0, d - n_crt / fps - 0.05)), caption=cap,
-                               scene=si, extra={"src_dur": n_crt / fps}))
+        crt = next((s for s in body if s.kind == "crt"), None)
+        if crt:   # the CRT shot is the transition: it plays first
+            body.remove(crt)
+            body.insert(0, crt)
         # 1-frame black on hard beats: before the speed ramp and before the scene's last shot
         final: list[Seg] = []
         for i, s in enumerate(body):
@@ -332,12 +430,6 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             s.pop = s.caption != prev
             prev = s.caption
         segs += final
-    if best_open:   # cold open: title over the strongest frame in the whole episode
-        title.src, title.start = best_open[1], max(0.0, best_open[2] - 0.2)
-        title.extra["src_dur"] = title.frames / fps
-        for sg in segs:   # a scene opener on the same moment continues after the title instead of repeating it
-            if sg.kind == "clip" and sg.src == title.src and abs(sg.start - title.start) < 1.5:
-                sg.start = min(_duration(sg.src) - sg.extra["src_dur"] - 0.05, title.start + title.frames / fps)
     segs += [Seg("flash", 2), Seg("end", frames(END_FRAMES_S))]
     t = 0.0
     plan_segments.gated = gated
@@ -345,6 +437,24 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         s.at = round(t, 4)
         t += s.frames / fps
     return segs
+
+
+def reuse_report(timeline: list[dict], fps: int) -> dict:
+    """Recount reuse from the final timeline (not the planner's ledger): clip footage windows of the
+    same file overlapping by more than one frame, and stills shown more than once."""
+    spans: dict[str, list[tuple[float, float]]] = {}
+    stills: list[str] = []
+    for s in timeline:
+        if s["kind"] in ("clip", "crt", "title") and s["src"]:
+            shown = s["extra"]["src_dur"] if s["extra"].get("ramp") else s["frames"] / fps / s["speed"]
+            spans.setdefault(s["src"], []).append((s["start"], s["start"] + shown))
+        elif s["kind"] == "still":
+            stills.append(s["src"])
+    overlaps = sum(1 for iv in spans.values() for i in range(len(iv)) for j in range(i + 1, len(iv))
+                   if min(iv[i][1], iv[j][1]) - max(iv[i][0], iv[j][0]) > 1 / fps)
+    return {"overlapping_windows": overlaps, "still_repeats": len(stills) - len(set(stills)),
+            "unique_sources": len(spans) + len(set(stills)),
+            "source_seconds_used": round(sum(b - a for iv in spans.values() for a, b in iv), 2)}
 
 
 # ---------------------------------------------------------------- rendering
@@ -574,6 +684,7 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
               "crt_inserts": sum(1 for s in segs if s.kind == "crt"),
               "longest_shot_s": round(max((s.frames for s in content), default=0) / fps, 3),
               "audio": notes, "timeline": [asdict(s) for s in segs]}
+    report["reuse"] = reuse_report(report["timeline"], fps)
     Path(str(out) + ".cuts.json").write_text(json.dumps(report, indent=1))
     log.info("cut: %s shots, %.1fs, %s cuts/min, audio=%s", report["shots"], total,
              report["cuts_per_minute"], notes)

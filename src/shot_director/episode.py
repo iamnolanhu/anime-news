@@ -5,9 +5,11 @@ SFW, no real people's likeness. Characters are original archetypes (the Anchor, 
 headline appears as on-screen text in the world (tickers, holograms), never as a depicted person.
 Structure and prompt wording follow docs/psyopanime-formula.md (structure only, none of their IP).
 
-Length: an episode of N minutes is S scenes x C clips of `clip_seconds` each. Clips inside a scene
-are rendered in order and (FLUX 3 Video, live) each continues from the previous one; scenes render
-in parallel. Scenes are concatenated in order into one mp4.
+Length: an episode of N minutes is S scenes x C clips of `clip_seconds` each. Every shot gets its own
+start frame from its own prompt and its clip is image-to-video from that frame, so shots render
+concurrently (a bounded pool over the whole episode). `continuity=True` keeps the old mode: one start
+frame per scene and (FLUX 3 Video, live) each clip continues from the previous one, scenes in parallel.
+Shots are concatenated in plan order into one mp4.
 """
 
 import argparse
@@ -30,8 +32,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MAX_HEADLINE = 140
 MAX_CLIPS_PER_SCENE = 4      # continuity chain length inside one scene
 DEFAULT_MINUTES = 1.0
-DEFAULT_CLIP_SECONDS = 15    # flux-3-video takes 5-20 s per clip
-DEFAULT_PARALLEL = 3         # scenes rendered at once
+DEFAULT_CLIP_SECONDS = 5     # flux-3-video takes 5-20 s per clip; short clips cut into 2-3 fresh windows
+DEFAULT_PARALLEL = 4         # shots rendered at once (scenes, with continuity=True)
 LEDGER_NAME = "episodes.json"
 KNOWN_ENGINES = {e["id"] for e in ENGINES} | {VIDEO_MODEL, "ltx/ltx-2-5-pro"}
 
@@ -226,20 +228,33 @@ def _merge_script(plan: dict, script: dict | None, body: str) -> None:
 
 # -- rendering ---------------------------------------------------------------------------------
 
+def _make_frame(router, media: Path, prompt: str, body: str, styled: bool, anchor: bool) -> str:
+    """One start frame from `prompt`; anchor-desk prompts use the series style sheet when it exists."""
+    frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
+    frame_prompt = f"{prompt}. {presets.CAMERA_BODIES[body]['fragment']}."
+    if styled and anchor:  # the sheet's Anchor; crowd scenes stay plain (it clones his face)
+        style.generate_styled_frame(router, frame_prompt, media / frame_name, media)
+    else:
+        router.generate_frame(frame_prompt, body, media / frame_name)
+    return frame_name
+
+
+def _shot_entry(name: str, s: dict, body: str, prompt: str, router, engine: str, frame_name: str) -> dict:
+    return {"id": name, "url": f"/media/{name}", "beat": s["beat"], "caption": s["caption"], "body": body,
+            "move": s["move"], "prompt": prompt, "mode": router.mode, "engine": engine,
+            "frame": frame_name, "frame_url": f"/media/{frame_name}"}
+
+
 def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_seconds: int,
                   styled: bool = False) -> dict:
-    """One start frame, then the scene's clips in order; FLUX 3 Video (live) continues clip to clip.
-    Fail-soft: an error stops this scene only; the clips rendered so far are kept and `error` is set."""
+    """continuity=True: one start frame, then the scene's clips in order; FLUX 3 Video (live) continues
+    clip to clip. Fail-soft: an error stops this scene only; the clips rendered so far are kept and `error` is set."""
     out = {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
-           "narration": sc["narration"], "frame": None, "shots": [], "error": None}
+           "narration": sc["narration"], "frame": None, "frames": [], "shots": [], "error": None}
     try:
-        frame_name = f"frame-{uuid.uuid4().hex[:8]}.png"
-        frame_prompt = f"{sc['scene']}. {presets.CAMERA_BODIES[body]['fragment']}."
-        if styled and sc.get("anchor"):  # the sheet's Anchor; crowd scenes stay plain (it clones his face)
-            style.generate_styled_frame(router, frame_prompt, media / frame_name, media)
-        else:
-            router.generate_frame(frame_prompt, body, media / frame_name)
+        frame_name = _make_frame(router, media, sc["scene"], body, styled, bool(sc.get("anchor")))
         out["frame"] = {"frame": frame_name, "url": f"/media/{frame_name}"}
+        out["frames"] = [frame_name]
         previous = None
         for s in sc["shots"]:
             prompt = presets.compile_prompt(body, s["move"], s["scene"])
@@ -249,9 +264,7 @@ def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_se
                 extra["previous_clip"] = media / previous
             router.generate_clip(prompt, body, s["move"], media / name, frame=media / frame_name,
                                  model=engine, duration=clip_seconds, **extra)
-            out["shots"].append({"id": name, "url": f"/media/{name}", "beat": s["beat"],
-                                 "caption": s["caption"], "body": body, "move": s["move"],
-                                 "prompt": prompt, "mode": router.mode, "engine": engine,
+            out["shots"].append({**_shot_entry(name, s, body, prompt, router, engine, frame_name),
                                  "continued": "previous_clip" in extra,
                                  "continued_from": previous if extra else None})
             previous = name
@@ -260,6 +273,48 @@ def _render_scene(router, media: Path, sc: dict, body: str, engine: str, clip_se
     print(f"[shot-director] scene {sc['index']} ({sc['kind']}): {len(out['shots'])}/{len(sc['shots'])} clips"
           + (f", FAILED {out['error']}" if out["error"] else ", done"), file=sys.stderr, flush=True)
     return out
+
+
+def _render_shot(router, media: Path, sc: dict, s: dict, body: str, engine: str, clip_seconds: int,
+                 styled: bool) -> dict:
+    """Default mode: the shot's own start frame from its own prompt, then image-to-video from it (no
+    previous clip). Fail-soft: returns {"frame", "shot", "error"}; a frame made before a clip failure is kept."""
+    frame_name, shot = None, None
+    try:
+        frame_name = _make_frame(router, media, s["scene"], body, styled, bool(sc.get("anchor")))
+        prompt = presets.compile_prompt(body, s["move"], s["scene"])
+        name = f"shot-{uuid.uuid4().hex[:8]}.mp4"
+        router.generate_clip(prompt, body, s["move"], media / name, frame=media / frame_name,
+                             model=engine, duration=clip_seconds)
+        shot = {**_shot_entry(name, s, body, prompt, router, engine, frame_name),
+                "continued": False, "continued_from": None}
+        return {"frame": frame_name, "shot": shot, "error": None}
+    except Exception as e:
+        return {"frame": frame_name, "shot": shot, "error": f"shot {s['beat']}: {type(e).__name__}: {e}"[:400]}
+
+
+def _render_shots(router, media: Path, plan: dict, body: str, engine: str, parallel: int,
+                  styled: bool) -> list[dict]:
+    """Every shot of the episode through one bounded pool; results kept in plan order, grouped by scene.
+    The scene's `frame` is its first shot's frame; a failed shot is skipped and named in the scene's error."""
+    jobs = [(sc, s) for sc in plan["scenes"] for s in sc["shots"]]
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        done = list(pool.map(lambda job: _render_shot(router, media, job[0], job[1], body, engine,
+                                                      plan["clip_seconds"], styled), jobs))
+    scenes, it = [], iter(done)
+    for sc in plan["scenes"]:
+        res = [next(it) for _ in sc["shots"]]
+        frames = [r["frame"] for r in res if r["frame"]]
+        errs = [r["error"] for r in res if r["error"]]
+        out = {"index": sc["index"], "kind": sc["kind"], "setting": sc["setting"], "caption": sc["caption"],
+               "narration": sc["narration"],
+               "frame": {"frame": frames[0], "url": f"/media/{frames[0]}"} if frames else None,
+               "frames": frames, "shots": [r["shot"] for r in res if r["shot"]],
+               "error": "; ".join(errs) or None}
+        print(f"[shot-director] scene {sc['index']} ({sc['kind']}): {len(out['shots'])}/{len(sc['shots'])} clips"
+              + (f", FAILED {out['error']}" if out["error"] else ", done"), file=sys.stderr, flush=True)
+        scenes.append(out)
+    return scenes
 
 
 def _sentence(text: str) -> str:
@@ -283,14 +338,15 @@ def _cut(result: dict, media: Path, epid: str, scenes: list[dict]) -> tuple[Path
     if impact:
         plan["sfx"].append({"path": str(impact), "at": None, "gain": 0.8})
     for sc in scenes:
-        if not sc["shots"]:
+        if not sc["shots"] and not sc.get("frames"):
             continue
         narr = audio.narrate(sc["narration"], media / f"{epid}-narration-{sc['index']}.mp3")
         plan["scenes"].append({
             "beat": sc["kind"], "action": sc["kind"] in ("segment_b", "montage"),
-            "caption": " ".join(_sentence(s["caption"]) for s in sc["shots"]),
+            "caption": " ".join(_sentence(s["caption"]) for s in sc["shots"]) or _sentence(sc["caption"]),
             "clips": [str(media / s["id"]) for s in sc["shots"]],
-            "stills": [str(media / sc["frame"]["frame"])] if sc["frame"] else [],
+            # a start frame is its clip's first moment: only a scene left with no clips shows its frames
+            "stills": [] if sc["shots"] else [str(media / f) for f in sc.get("frames", [])],
             "narration": sc["narration"], "narration_audio": str(narr) if narr else None})
     out = media / f"{epid}.mp4"
     edit.assemble(plan, out, audio=True, base=media)
@@ -299,8 +355,10 @@ def _cut(result: dict, media: Path, epid: str, scenes: list[dict]) -> tuple[Path
 
 
 def render_episode(plan: dict, router, media: Path, body: str = "anime", engine: str | None = None,
-                   parallel: int = DEFAULT_PARALLEL, cut: bool = True, style_sheet: bool = True) -> dict:
-    """Render every scene (scenes in parallel, a failed scene keeps what it rendered), stitch the raw
+                   parallel: int = DEFAULT_PARALLEL, cut: bool = True, style_sheet: bool = True,
+                   continuity: bool = False) -> dict:
+    """Render every shot (own start frame each, `parallel` shots at once; continuity=True: one frame per
+    scene and chained clips, `parallel` scenes at once). A failed shot or scene keeps what rendered. Stitch the raw
     sequence, then (cut=True) assemble the anime cut with captions, narration, SFX and music.
     Uses its own shot list, not the UI queue."""
     media = Path(media).resolve()
@@ -309,9 +367,12 @@ def render_episode(plan: dict, router, media: Path, body: str = "anime", engine:
         raise ValueError(f"unknown engine: {engine}")
     media.mkdir(parents=True, exist_ok=True)
     styled = bool(style_sheet and router.mode == "live" and style.ensure_style_sheet(media, router))
-    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
-        scenes = list(pool.map(lambda sc: _render_scene(router, media, sc, body, engine,
-                                                        plan["clip_seconds"], styled), plan["scenes"]))
+    if continuity:
+        with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+            scenes = list(pool.map(lambda sc: _render_scene(router, media, sc, body, engine,
+                                                            plan["clip_seconds"], styled), plan["scenes"]))
+    else:
+        scenes = _render_shots(router, media, plan, body, engine, parallel, styled)
     shots = [s for sc in scenes for s in sc["shots"]]
     if not shots:
         raise RuntimeError("every scene failed: " + "; ".join(f"scene {sc['index']}: {sc['error']}" for sc in scenes))
@@ -394,7 +455,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
             engine: str | None = None, body: str = "anime", minutes: float = DEFAULT_MINUTES,
             clip_seconds: int = DEFAULT_CLIP_SECONDS, parallel: int = DEFAULT_PARALLEL,
             render: bool = True, cut: bool = True, use_writer: bool = True,
-            style_sheet: bool = True) -> dict:
+            style_sheet: bool = True, continuity: bool = False) -> dict:
     """Pick the story (top one not yet in the ledger unless `headline` is given), plan, render, record.
     Raises LookupError (no story), ValueError (bad input), RuntimeError/RouterError (render)."""
     media = Path(media).resolve()
@@ -419,7 +480,7 @@ def produce(router, media: Path, headline: str | None = None, source: str = "",
         plan = plan_episode(headline, source, body=body, minutes=minutes, clip_seconds=clip_seconds,
                             engine=engine, use_writer=use_writer, media=media)
         result = render_episode(plan, router, media, body=body, engine=engine, parallel=parallel, cut=cut,
-                                style_sheet=style_sheet)
+                                style_sheet=style_sheet, continuity=continuity)
     except BaseException as e:
         _update_ledger(media, entry_id, {"status": "failed", "error": f"{type(e).__name__}: {e}"[:300],
                                          "finished": _now()})
@@ -488,8 +549,11 @@ def main() -> None:
     ap.add_argument("--body", default="anime", help="camera body preset (default: anime)")
     ap.add_argument("--minutes", type=float, default=DEFAULT_MINUTES, help="episode length (default 1)")
     ap.add_argument("--clip-seconds", type=int, default=DEFAULT_CLIP_SECONDS,
-                    help="seconds per clip (default 15; FLUX 3 Video 5-20)")
-    ap.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL, help="scenes rendered at once (default 3)")
+                    help=f"seconds per clip (default {DEFAULT_CLIP_SECONDS}; FLUX 3 Video 5-20)")
+    ap.add_argument("--parallel", type=int, default=DEFAULT_PARALLEL,
+                    help=f"shots rendered at once (scenes, with --continuity; default {DEFAULT_PARALLEL})")
+    ap.add_argument("--continuity", action="store_true",
+                    help="one start frame per scene and chained clips (FLUX 3 Video v2v) instead of one frame per shot")
     ap.add_argument("--mock", action="store_true", help="offline placeholder render, no Router calls")
     ap.add_argument("--out", default=str(ROOT / "media"), help="media dir for frames, clips, episodes and the ledger")
     ap.add_argument("--no-cut", action="store_true", help="skip the anime cut: the episode is the plain stitch")
@@ -509,7 +573,8 @@ def main() -> None:
     router = make_router(media)
     opts = dict(engine=args.engine, body=args.body, minutes=args.minutes,
                 clip_seconds=args.clip_seconds, parallel=args.parallel, cut=not args.no_cut,
-                use_writer=not args.no_writer, style_sheet=not args.no_style_sheet)
+                use_writer=not args.no_writer, style_sheet=not args.no_style_sheet,
+                continuity=args.continuity)
     if args.loop:
         print(f"[shot-director] {router.mode} channel: one episode every {args.every} into {media}",
               file=sys.stderr)

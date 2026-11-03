@@ -76,7 +76,7 @@ Shot Director can direct itself from the news. It pulls the top trending headlin
 
 **Rule: SFW and no real people's likeness.** Every character is an original archetype; the headline is on-screen text, never a depicted person. No weapons, no gore, no named anime or studio styles, none of PsyopAnime's logo, series names or character designs. `news.top()` skips stories about deaths and violence (satire of a tragedy is not the joke); if nothing else is left it returns nothing, so `/api/episode` answers 503 and the CLI exits 1, rather than render a somber story.
 
-**Length.** An episode of N minutes is S scenes × C clips of `--clip-seconds` (default 15; FLUX 3 Video takes 5 to 20 s per clip). Total clips = exactly ceil(N × 60 / clip seconds): full scenes of 4 clips, the last scene takes the remainder (no padding). The clip length is first clamped to what the engine renders (FLUX 3 Video 5 to 20 s, MiniMax H3 4 to 15 s, LTX 2.5 snapped to its allowed values), and the plan reports both `clip_seconds` (effective) and `clip_seconds_requested`. Clips inside a scene render in order and (FLUX 3 Video, live) each continues from the previous one; scenes render in parallel (`--parallel`, default 3) and are stitched in order. One scene uses the 1-minute beat sheet (cold open, thesis, vignette, punchline); longer episodes are cold open → segments (literal headline, genre-pastiche standoff, rapid montage) → sign-off.
+**Length.** An episode of N minutes is S scenes × C clips of `--clip-seconds` (default 5; FLUX 3 Video takes 5 to 20 s per clip). Total clips = exactly ceil(N × 60 / clip seconds): full scenes of 4 clips, the last scene takes the remainder (no padding). The clip length is first clamped to what the engine renders (FLUX 3 Video 5 to 20 s, MiniMax H3 4 to 15 s, LTX 2.5 snapped to its allowed values), and the plan reports both `clip_seconds` (effective) and `clip_seconds_requested`. Shots render concurrently (`--parallel`, default 4) and are stitched in plan order. One scene uses the 1-minute beat sheet (cold open, thesis, vignette, punchline); longer episodes are cold open → segments (literal headline, genre-pastiche standoff, rapid montage) → sign-off.
 
 | Minutes | Clips (15 s) | Scenes × clips | Router calls (frames + clips) | Clips rendered back to back (parallel 3) |
 | --- | --- | --- | --- | --- |
@@ -85,12 +85,16 @@ Shot Director can direct itself from the news. It pulls the top trending headlin
 | 3 | 12 | 3 × 4 | 15 | 4 |
 | 5 | 20 | 5 × 4 | 25 | 8 (two waves of scenes) |
 
+The table is the 15 s `--continuity` layout; at the 5 s default a 1-minute episode is 12 shots in 3 scenes, each with its own start frame (24 Router calls).
+
+**One start frame per shot.** Every shot gets its own start frame from its own prompt (anchor-desk scenes through the style sheet) and its clip is image-to-video from that frame, with no previous clip, so shots no longer blur into one long take and they render concurrently. A failed shot is skipped and named in `errors`. `--continuity` (CLI) or `"continuity": true` (API) restores one start frame per scene with each clip continuing from the previous one (FLUX 3 Video `v2v`, live), scenes in parallel. In the cut, a scene's start frames are not shown as stills while it has clips (they are the clips' first frames); they become a still montage only for a scene whose clips all failed.
+
 Wall-clock ≈ one start frame (about 45 s) + "back to back" × the time of one clip. A 5 s FLUX 3 Video clip took 1.5 to 2 min live; 15 s clips are not measured yet, so expect several minutes each. A 1-minute episode is therefore tens of minutes, a 5-minute one roughly twice that.
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
 | GET | `/api/news` | | `{items: [{title, link, source, published, feed}]}` (10) |
-| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 15, parallel? = 3, cut? = true, writer? = true, style_sheet? = true, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
+| POST | `/api/episode` | `{headline?, source?, engine?, body? = "anime", minutes? = 1, clip_seconds? = 5, parallel? = 4, cut? = true, writer? = true, style_sheet? = true, continuity? = false, render? = true}` | `{headline, source, series, logline, scenes: [{kind, caption, narration, frame, shots}], shots, sequence: {url, file}, sequence_raw: {url, file}, cut: {duration, shots, cuts_per_minute, avg_shot_s, audio}, errors}`; with `render: false`, the plan only. Uses its own shot list, never the 3-slot UI queue. |
 | GET | `/api/episodes` | | `{episodes: [ledger entries], auto}` |
 
 **Script writer and style sheet.** Before rendering, the template plan is rewritten by the Router script writer (`writer.py`, one chat-model call, cached per headline in `<media>/scripts-cache.json`, see `docs/WRITER.md`): logline, each scene's setting, caption and narration, each shot's move, caption and prompt. Any writer failure (mock mode, no key, bad reply, wrong counts) keeps the template; the plan's `script` field says which one ran. Anchor-desk scenes (cold open, sign-off, the 1-minute single scene, writer beats `anchor_desk`/`thesis`) take their start frame from the series style sheet (`style.py`, `<media>/style-sheet.png`, made once), so the Anchor and the look stay the same across episodes; crowd and vignette scenes use a plain frame, because the reference copies the Anchor's face onto everyone. `--no-writer` / `"writer": false` and `--no-style-sheet` / `"style_sheet": false` turn them off.
@@ -104,7 +108,7 @@ uv run shot-director-episode                                  # top new story ->
 uv run shot-director-episode --minutes 5                      # target length
 uv run shot-director-episode --headline "Mayor bans Mondays" --mock --out /tmp/ep
 uv run shot-director-episode --loop --every 60m               # self-running: a new story every hour
-# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --mock --out DIR --no-cut --no-writer --no-style-sheet --loop --every
+# flags: --headline --source --engine --body --minutes --clip-seconds --parallel --continuity --mock --out DIR --no-cut --no-writer --no-style-sheet --loop --every
 # one-shot prints the episode mp4 path, then one JSON summary line; --loop prints one JSON line per tick
 ```
 

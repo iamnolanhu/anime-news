@@ -10,6 +10,10 @@ shot-director-cut --plan plan.json --out final.mp4 [--no-audio] [--sheet sheet.p
 anime-news render --recut <episode>.shots.json [--out DIR]   # cut an episode again from the shots on disk, no spend
 ```
 
+`--recut` refuses (exit 1, nothing written) when a shot file named in the shots.json is missing, renders the new cut
+under a temporary name and replaces the episode (video, cuts.json, plan, 9:16) only when the new cut holds at least
+one real shot.
+
 From Python: `edit.assemble(plan, out_path, audio=True, base=plan_dir)`. Next to the video it writes
 `<out>.cuts.json` (`edit.cut_report`): duration, shot count, cuts per minute, average shot, gated angles, the
 `reuse` check, the full timeline, every voice line as placed (`voice`: `played` against the file's `file_dur`),

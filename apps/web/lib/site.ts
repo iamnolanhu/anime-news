@@ -1,4 +1,4 @@
-export const SITE_URL = "https://anime-news.vercel.app";
+export const SITE_URL = "https://anime-news-nine.vercel.app";
 export const REPO_URL = "https://github.com/iamnolanhu/anime-news";
 export const ENGINE_DEFAULT_URL = "http://127.0.0.1:8765";
 export const ENGINE_SPEC = `git+${REPO_URL}#subdirectory=packages/engine`;

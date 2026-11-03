@@ -94,16 +94,38 @@ moment, so it is left out while the scene has a usable clip window (rule 3).
 The resulting pace is about 40 to 45 shots per minute. That is faster than the 20 to 35 cuts per minute
 in the first brief; the research's 1.3 to 1.8 s average shot overrides it.
 
+## Talking-cast plan fields (episode v2, `showrunner.edit_plan`)
+
+- **`"talk": true`** scene (one clip, `"line"`, `"speaker"`): the take is shown nearly whole, from 0.15 s to
+  its end minus 0.1 s, as 2 or 3 windows of 1.6 to 3.0 s that abut exactly in source time. Cuts fall on a
+  clause boundary of the line (by word count) when one is within 0.6 s of the even split. Framing
+  alternates wide, punch-in (1.3x, centred, upper third), wide. The clauses are captioned for their
+  word-count share of the take, across the cuts. No speed ramp, burst, CRT, black frame or still; the white
+  flash before the scene stays. Talk takes are never used for the title background.
+- **`"clip_audio_gain"`** (action scenes, default 0): each shown window's own sound, same source span as the
+  picture (speed ramps time-stretched), on the SFX bus at that gain. Clips without audio are skipped.
+- **`"music_intro"`**: a riser from 0; the bed comes in on the title card (the drop) with a 0.15 s crossfade.
+  If the riser is shorter than the cold open, the bed starts where the riser ends, so there is never a gap.
+- **`"title_after_scene"`**: the title card goes right after that scene (cold open first). Every SFX entry
+  with `"at": null` also hits the title.
+- **`"countdown": {"label", "scene_beat"}`**: the first non-talk scene with that beat gets a big red
+  (#FF2A2A) monospace countdown top-right, the label above, `00:SS` running down to `00:00` over the
+  scene; the last second flashes white. `cuts.json` notes it under `countdown`, and the title time under `title_at`.
+
 ## Audio
 
-- **Narration:** a single voiceover bus. Each line is pre-normalized (`loudnorm` I=-16), delayed to
-  its scene start, and mixed.
-- **Music bed:** looped to the cut's length, faded in and out, and ducked under the narration with
-  `sidechaincompress` (threshold 0.03, ratio 10, attack 20 ms, release 400 ms).
-- **SFX:** hits placed on the scene changes (whoosh leading by 0.25 s, impact on the flash).
-- **Final:** mixed, then `loudnorm` I=-16 TP=-1.5 LRA=11. This is single-pass, so integrated loudness
-  lands near -16 (the test measured -18.5 LUFS). With nothing provided, or with `--no-audio`, a silent
-  stereo AAC track is still written so players behave.
+Each bus is rendered to its own WAV stem with a length check, then the stems are mixed. One graph with
+every input in it ended the mix early (loudnorm inside a multi-input graph truncated the bus).
+
+- **Voice bus:** narration lines plus the dialogue (each talk take's own sound for exactly the source span
+  on screen). Each line is loudnorm'd to -16 LUFS on its own, then delayed to its place.
+- **Music bus:** the bed (volume 0.8), looped to the end with no gaps, optional intro riser, ducked under
+  the voice bus only (never under SFX) with `sidechaincompress` (threshold 0.03, ratio 10, attack 20 ms,
+  release 400 ms).
+- **SFX bus:** hits on the scene changes (whoosh leading by 0.25 s, impact on the flash) and the action
+  clips' own sound.
+- **Final:** mixed, then `loudnorm` I=-14 TP=-1.0 LRA=11 (single-pass; the mock v2 cut measured -13.5 LUFS).
+  With nothing provided, or with `--no-audio`, a silent stereo AAC track is still written so players behave.
 
 ## Sound generation (`audio.py`, Comfy Router)
 

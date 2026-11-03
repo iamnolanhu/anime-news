@@ -285,6 +285,7 @@ OUTPUT: ONE JSON object, nothing else:
 
 USER_PROMPT_V2 = """Headline: "{headline}"
 Source: {source}
+Vignette genre for this episode: {genre} (dramatize the moral as that genre; not a western unless the genre says so).
 Shot slots, in order (act: kind/speaker per shot). Match them EXACTLY, same number of acts and shots, same kinds and speakers:
 {slots}
 Return the JSON object only."""
@@ -341,14 +342,15 @@ def validate_v2(script: object, slots: list[tuple[str, list[tuple[str, str]]]]) 
 
 def write_script_v2(headline: str, source: str, slots: list[tuple[str, list[tuple[str, str]]]],
                     series_title: str = "THE HOURLY BRIEFING", *, previous: dict | None = None,
-                    media_dir: Path | None = None, model: str = CHAT_MODEL) -> dict | None:
+                    genre: str = "heist movie", media_dir: Path | None = None,
+                    model: str = CHAT_MODEL) -> dict | None:
     """Headline -> validated v2 script (acts of talk/action shots with spoken lines), or None on any failure.
     `previous` = {"logline", "title_card"} of the last episode, for the callback rule. Cached like v1."""
     headline = " ".join((headline or "").split())
     if not headline:
         return None
     cache = _media_dir(media_dir) / CACHE_NAME
-    key = "v2:" + _cache_key(headline, len(slots))
+    key = "v2:" + _cache_key(f"{headline}|{genre}", len(slots))
     cached = _read_cache(cache).get(key)
     if cached:
         try:
@@ -362,7 +364,8 @@ def write_script_v2(headline: str, source: str, slots: list[tuple[str, list[tupl
                                      max_words=LINE_MAX_WORDS, moves=", ".join(MOVES))
     slot_text = "\n".join(f"{i}. {act}: " + ", ".join(f"{k}/{sp}" for k, sp in shots)
                           for i, (act, shots) in enumerate(slots, 1))
-    user = USER_PROMPT_V2.format(headline=headline.replace('"', "'"), source=source or "unknown", slots=slot_text)
+    user = USER_PROMPT_V2.format(headline=headline.replace('"', "'"), source=source or "unknown", slots=slot_text,
+                                 genre=genre)
     try:
         script = validate_v2(json.loads(_strip_fences(_chat(system, user, model))), slots)
     except Exception as e:

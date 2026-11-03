@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import random
 import shutil
@@ -29,7 +30,7 @@ from pathlib import Path
 log = logging.getLogger("shot_director.edit")
 
 GOLD = "0xF5C518"
-END_CARD_TEXT = "Shot Director · open source · #OpenSourceHiggsfield"
+END_CARD_TEXT = os.environ.get("SHOT_DIRECTOR_END_CARD", "Shot Director · open source · #OpenSourceHiggsfield")
 WORDMARK = os.environ.get("SHOT_DIRECTOR_WORDMARK", "SHOT DIRECTOR")
 TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
@@ -42,6 +43,10 @@ BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
 BURST_COUNT = 4
 CRT_SEG = (0.5, 0.8)       # CRT monitor insert used as a transition
 SHARP_GATE = 0.4           # skip clip segments whose sharpness < 40 % of the clip's median
+TALK_WIN = (1.6, 3.0)      # a talk take is shown nearly whole, in 2-3 abutting windows of this length
+TALK_PUNCH = 1.3           # punch-in crop on alternate talk windows
+COUNTDOWN_RED = "0xFF2A2A"
+BED_VOLUME = 0.8
 ACTION_WORDS = ("action", "chase", "fight", "escalat", "montage", "burst", "battle", "attack", "clash", "run")
 FONT_CANDIDATES = [
     os.environ.get("SHOT_DIRECTOR_FONT", ""),
@@ -50,6 +55,13 @@ FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
+MONO_FONT_CANDIDATES = [
+    os.environ.get("SHOT_DIRECTOR_MONO_FONT", ""),
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
 ]
 
 
@@ -84,11 +96,23 @@ def _duration(path: str | Path) -> float:
         return 0.0
 
 
-def _font() -> str:
-    for f in FONT_CANDIDATES:
+def _font(candidates: list[str] = FONT_CANDIDATES) -> str:
+    for f in candidates:
         if f and Path(f).exists():
             return f
     return ""
+
+
+_AUDIO_CACHE: dict[str, bool] = {}
+
+
+def _has_audio(path: str) -> bool:
+    """True when the file has an audio stream (mock FLUX clips have none)."""
+    if path not in _AUDIO_CACHE:
+        p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                            "-of", "csv=p=0", path], capture_output=True, text=True)
+        _AUDIO_CACHE[path] = bool(p.stdout.strip())
+    return _AUDIO_CACHE[path]
 
 
 _SHARP_CACHE: dict[tuple[str, int], float] = {}
@@ -241,6 +265,54 @@ def _still_items(scene: dict, abs_path, resolve) -> list[tuple[str, str | None]]
     return out
 
 
+def _talk_cuts(total: int, line: str, fps: int) -> list[int]:
+    """Frame counts of the 2-3 abutting windows of a talk take (`total` frames). Cuts fall on a clause
+    boundary of the line (mapped by word count) when one lies within 0.6 s of the even split and keeps every
+    window inside TALK_WIN; otherwise on the even split."""
+    length = total / fps
+    if length < 2 * TALK_WIN[0]:
+        return [total]
+    k = min(3, max(2, math.ceil(length / TALK_WIN[1])))
+    words = [len(c.split()) for c in split_clauses(line)] if line else []
+    marks = [length * sum(words[:i]) / max(1, sum(words)) for i in range(1, len(words))]
+    bounds = [0]
+    for j in range(1, k):
+        ideal, prev = length * j / k, bounds[-1] / fps
+        lo = max(prev + TALK_WIN[0], length - TALK_WIN[1] * (k - j))
+        hi = min(prev + TALK_WIN[1], length - TALK_WIN[0] * (k - j))
+        ok = [m for m in marks if lo <= m <= hi and abs(m - ideal) <= 0.6]
+        bounds.append(round((min(ok, key=lambda m: abs(m - ideal)) if ok else ideal) * fps))
+    bounds.append(total)
+    return [b - a for a, b in zip(bounds, bounds[1:])]
+
+
+def _talk_segments(clip: str, dur: float, line: str, fps: int, si: int) -> list[Seg]:
+    """A talk take, nearly whole (0.15 s to the end - 0.1 s), as abutting windows: wide, punch-in, wide.
+    Captions are the line's clauses timed by word count across the take, as cues per window."""
+    a0 = 0.15
+    total = int((dur - 0.1 - a0) * fps + 1e-6)
+    segs, f0 = [], 0
+    for j, n in enumerate(_talk_cuts(total, line, fps)):
+        s = Seg("clip", n, src=clip, start=a0 + f0 / fps, scene=si, motion="talk_punch" if j % 2 else "")
+        s.extra.update(src_dur=n / fps, talk=True)
+        segs.append(s)
+        f0 += n
+    clauses = split_clauses(line) if line else []
+    words = [max(1, len(c.split())) for c in clauses]
+    span, acc, cues = f0 / fps, 0, []
+    for c, w in zip(clauses, words):
+        cues.append((c, span * acc / sum(words), span * (acc + w) / sum(words)))
+        acc += w
+    off = 0.0
+    for s in segs:
+        d = s.frames / fps
+        s.extra["cues"] = [(c, round(max(0.0, a - off), 3), round(min(d, b - off), 3))
+                           for c, a, b in cues if b > off + 1e-6 and a < off + d - 1e-6]
+        s.caption = s.extra["cues"][0][0] if s.extra["cues"] else ""
+        off += d
+    return segs
+
+
 def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     fps = int(plan.get("fps", 24))
     rng = random.Random(plan.get("seed", 7))
@@ -264,7 +336,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     profiles: list[dict[str, tuple[float, float, float, float]]] = []   # clip -> (dur, t_best, score, median)
     for scene in plan.get("scenes", []):
         info: dict[str, tuple[float, float, float, float]] = {}
-        for clip in (resolve(p) for p in scene.get("clips", [])):
+        for clip in ([] if scene.get("talk") else (resolve(p) for p in scene.get("clips", []))):
             if clip and clip not in info:
                 dur = _duration(clip)
                 if dur > 0.5:
@@ -278,9 +350,20 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         title.extra["src_dur"] = span
         ledger.take(clip, title.start, title.start + span)
     for si, scene in enumerate(plan.get("scenes", [])):
-        cap = scene.get("caption") or scene.get("beat") or ""
+        cap = scene["caption"] if "caption" in scene else (scene.get("beat") or "")  # "" = no subtitles
         action = bool(scene.get("action")) or any(w in str(scene.get("beat", "")).lower() for w in ACTION_WORDS)
         info = profiles[si]
+        if scene.get("talk"):   # one continuous take with its own dialogue: no ramp, burst, CRT, black or stills
+            clip = next((c for c in (resolve(p) for p in scene.get("clips", [])) if c), None)
+            dur = _duration(clip) if clip else 0.0
+            if dur <= 0.5:
+                log.warning("scene %d: talk scene without a usable clip, skipped", si)
+                continue
+            talk = _talk_segments(clip, dur, scene.get("line") or cap, fps, si)
+            for s in talk:
+                ledger.take(s.src, s.start, s.start + s.extra["src_dur"])
+            segs += [Seg("flash", 2, scene=si)] + talk
+            continue
         stills = _still_items(scene, abs_path, resolve)
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
         clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
@@ -430,12 +513,29 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             s.pop = s.caption != prev
             prev = s.caption
         segs += final
+    after = plan.get("title_after_scene")
+    if after is not None:   # cold open first, the title lands on the drop right after scene `after`
+        idx = max((i for i, s in enumerate(segs) if 0 <= s.scene <= after), default=None)
+        if idx is not None:
+            segs.remove(title)
+            segs.insert(idx, title)
     segs += [Seg("flash", 2), Seg("end", frames(END_FRAMES_S))]
     t = 0.0
     plan_segments.gated = gated
     for s in segs:
         s.at = round(t, 4)
         t += s.frames / fps
+    cd = plan.get("countdown")
+    for si, scene in enumerate(plan.get("scenes", []) if cd else []):
+        body = [s for s in segs if s.scene == si and s.kind != "flash"]
+        if scene.get("beat") != cd.get("scene_beat") or scene.get("talk") or not body:
+            continue
+        total = sum(s.frames for s in body) / fps
+        for s in body:
+            if s.kind in ("clip", "still", "crt"):
+                s.extra["countdown"] = {"label": cd.get("label", ""), "total": round(total, 3),
+                                        "offset": round(s.at - body[0].at, 4)}
+        break
     return segs
 
 
@@ -459,16 +559,50 @@ def reuse_report(timeline: list[dict], fps: int) -> dict:
 
 # ---------------------------------------------------------------- rendering
 def _caption_filter(s: Seg, font: str, workdir: Path, idx: int, H: int) -> str:
+    size = max(26, H // 18)
+    fontopt = f"fontfile={_q(font)}:" if font else ""
+    style_ = (f":expansion=none:fontsize={size}:fontcolor={GOLD}:box=1:boxcolor=black@0.62:boxborderw={size // 3}"
+              f":line_spacing={size // 5}:x=(w-text_w)/2:y=h-text_h-{H // 11}")
+    if s.extra.get("cues"):   # talk take: each clause on screen for its share of the spoken line
+        out = ""
+        for k, (text, a, b) in enumerate(s.extra["cues"]):
+            tf = workdir / f"cap-{idx}-{k}.txt"
+            tf.write_text(_wrap_caption(text))
+            alpha = f":alpha='min(1,(t-{a:.3f})*10)'" if a > 0.001 else ""
+            out += f",drawtext={fontopt}textfile={_q(tf)}{style_}:enable='between(t,{a:.3f},{b:.3f})'{alpha}"
+        return out
     if not s.caption:
         return ""
     tf = workdir / f"cap-{idx}.txt"
     tf.write_text(_wrap_caption(s.caption))
-    size = max(26, H // 18)
     alpha = ":alpha='min(1,t*10)'" if s.pop else ""
-    fontopt = f"fontfile={_q(font)}:" if font else ""
-    return (f",drawtext={fontopt}textfile={_q(tf)}:expansion=none:fontsize={size}:fontcolor={GOLD}"
-            f":box=1:boxcolor=black@0.62:boxborderw={size // 3}:line_spacing={size // 5}"
-            f":x=(w-text_w)/2:y=h-text_h-{H // 11}{alpha}")
+    return f",drawtext={fontopt}textfile={_q(tf)}{style_}{alpha}"
+
+
+def _countdown_filter(s: Seg, workdir: Path, idx: int, H: int) -> str:
+    """Big red digital countdown top-right: label above, 00:SS counting down to 00:00 over the scene;
+    the final second flashes white."""
+    cd = s.extra.get("countdown")
+    if not cd:
+        return ""
+    mono = _font(MONO_FONT_CANDIDATES) or _font()
+    fontopt = f"fontfile={_q(mono)}:" if mono else ""
+    rem = f"({cd['total']:.3f}-{cd['offset']:.4f}-t)"
+    digits, label = workdir / f"cd-{idx}.txt", workdir / f"cdl-{idx}.txt"
+    digits.write_text("00:%{eif:max(0,floor(" + rem + ")):d:2}")
+    label.write_text(cd["label"][:28])
+    size, lsize, m = H // 9, max(16, H // 34), H // 24
+    box = f":box=1:boxcolor=black@0.72:boxborderw={max(6, size // 6)}"
+    red = f"gte({rem},1)+lt({rem},1)*gte(mod(t*6,1),0.5)"
+    white = f"lt({rem},1)*lt(mod(t*6,1),0.5)"
+    out = ""
+    if cd["label"]:
+        out += (f",drawtext={fontopt}textfile={_q(label)}:expansion=none:fontsize={lsize}:fontcolor={COUNTDOWN_RED}"
+                f":box=1:boxcolor=black@0.72:boxborderw=6:x=w-text_w-{m}:y={m}")
+    for color, enable in ((COUNTDOWN_RED, red), ("white", white)):
+        out += (f",drawtext={fontopt}textfile={_q(digits)}:expansion=normal:fontsize={size}:fontcolor={color}"
+                f"{box}:x=w-text_w-{m}:y={m + lsize + 18}:enable='{enable}'")
+    return out
 
 
 def _wordmark(font: str, workdir: Path, H: int) -> str:
@@ -501,12 +635,15 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
     fit = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
     enc = ["-frames:v", str(s.frames), "-r", str(fps), "-an", "-c:v", "libx264", "-preset", "veryfast",
            "-crf", "19", "-pix_fmt", "yuv420p", "-video_track_timescale", str(fps * 512), str(out)]
-    cap = _caption_filter(s, font, workdir, idx, H) + _wordmark(font, workdir, H)
+    cap = _caption_filter(s, font, workdir, idx, H) + _wordmark(font, workdir, H) + _countdown_filter(s, workdir, idx, H)
     if s.kind == "clip":
         src_dur = s.extra.get("src_dur", s.frames / fps / s.speed)
         vf = f"{fit},setpts={s.speed}*(PTS-STARTPTS),fps={fps}"
         if s.motion == "punch":   # quick push-in on the opener
             vf += f",zoompan=z='min(1+0.006*on,1.18)':d=1:x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':s={W}x{H}:fps={fps}"
+        elif s.motion == "talk_punch":   # tighter framing on the speaker: centred, upper third (the face)
+            vf += (f",scale=trunc(iw*{TALK_PUNCH}/2)*2:trunc(ih*{TALK_PUNCH}/2)*2"
+                   f",crop={W}:{H}:'(iw-ow)/2':'max(0,min(ih-oh,ih/3-oh/2))'")
         cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{s.start:.3f}", "-t", f"{src_dur + 0.25:.3f}",
                "-i", s.src, "-vf", vf + cap + ",tpad=stop_mode=clone:stop_duration=1"] + enc
     elif s.kind == "still":
@@ -563,8 +700,53 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
 
 
 # ---------------------------------------------------------------- audio
-def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple[list[str], str, list[str]]:
-    """Returns (ffmpeg input args, filter_complex, notes). Input 0 is the video."""
+class _Bus:
+    """One audio bus rendered by its own ffmpeg run: many delayed file inputs in one graph with the other
+    buses ended the whole mix early (ffmpeg 7.1), so each bus is a WAV stem of exactly the cut's length."""
+
+    def __init__(self) -> None:
+        self.args: list[str] = []
+        self.parts: list[str] = []
+        self.outs: list[str] = []
+
+    def add(self, args: list[str], chain: str) -> None:
+        i = self.args.count("-i")
+        self.args += args
+        self.parts.append(f"[{i}:a]{chain}[a{i}]")
+        self.outs.append(f"[a{i}]")
+
+    def render(self, out: Path, total: float, post: str = "", extra: list[str] | None = None) -> Path | None:
+        """Mix the bus to `out`; `post` is a filter chain from [bus] to [out] (default: pad/trim only)."""
+        if not self.outs:
+            return None
+        mixed = "".join(self.outs) + (f"amix=inputs={len(self.outs)}:normalize=0:duration=longest" if len(self.outs) > 1
+                                      else "anull")
+        graph = ";".join(self.parts + [mixed + "[bus]", post or f"[bus]apad,atrim=0:{total:.3f}[out]"])
+        _run(["ffmpeg", "-y", "-v", "error"] + self.args + (extra or []) + ["-filter_complex", graph, "-map", "[out]",
+             "-c:a", "pcm_f32le", "-ar", "48000", str(out)])
+        got = _duration(out)
+        if got < total - 0.1:
+            raise RuntimeError(f"audio bus {out.name} rendered {got:.2f}s of {total:.2f}s")
+        return out
+
+
+def _line_wav(src: str, out: Path, start: float = 0.0, dur: float | None = None) -> Path:
+    """One voice line loudnorm'd (-16 LUFS) to its own WAV, optionally a source span padded to exactly `dur`.
+    Done per line in its own run: loudnorm inside the multi-input bus graph truncated the bus at the third line."""
+    span = f"atrim=start={start:.4f}:duration={dur:.4f},asetpts=PTS-STARTPTS," if dur else ""
+    pad = f",apad,atrim=0:{dur:.4f}" if dur else ""
+    _run(["ffmpeg", "-y", "-v", "error", "-i", src, "-af",
+          f"{span}aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-16:TP=-2,aresample=48000{pad}",
+          "-c:a", "pcm_f32le", str(out)])
+    return out
+
+
+def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path,
+                 work: Path) -> tuple[list[str], str, list[str]]:
+    """Renders the buses to WAV stems in `work` and returns (ffmpeg input args, filter_complex, notes) for the
+    final mix; input 0 is the video. Buses: voice (narration + the talk takes' own dialogue; the music ducks
+    under it), music (optional intro riser from 0, the bed from the title drop, continuous to the end), SFX
+    (hits + action clips' own sound at `clip_audio_gain`). Final loudnorm I=-14 TP=-1."""
     def resolve(p) -> str | None:
         if not p:
             return None
@@ -572,18 +754,17 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple
         pp = pp if pp.is_absolute() else base / pp
         return str(pp) if pp.exists() and pp.stat().st_size > 0 else None
 
-    inputs: list[str] = []
-    parts: list[str] = [f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[base]"]
-    mix = ["[base]"]
+    fps = int(plan.get("fps", 24))
+    stereo = "aresample=48000,aformat=channel_layouts=stereo"
     notes: list[str] = []
-    n = 1
     scene_start = {}
     for s in segs:
         if s.scene >= 0 and s.kind not in ("flash", "black") and s.scene not in scene_start:
             scene_start[s.scene] = s.at
     changes = [s.at for s in segs if s.kind == "flash"]
+    title = next((s for s in segs if s.kind == "title"), None)
 
-    voices = []
+    voice = _Bus()
     items = list(plan.get("narration") or [])
     for si, sc in enumerate(plan.get("scenes", [])):
         if sc.get("narration_audio"):
@@ -595,58 +776,94 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple
         sc = item.get("scene", -1)
         at = float(item["at"]) if item.get("at") is not None else (
             0.15 if sc is None or sc < 0 else scene_start.get(sc, 0.0) + 0.1)
-        inputs += ["-i", p]
         ms = int(at * 1000)
-        parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-16:TP=-2,"
-                     f"adelay={ms}|{ms}[v{n}]")
-        voices.append(f"[v{n}]")
-        n += 1
-    if voices:
-        parts.append("".join(voices) + f"amix=inputs={len(voices)}:normalize=0:duration=longest,"
-                     f"apad,atrim=0:{total:.3f},asplit=2[voice][vkey]")
-        mix.append("[voice]")
-        notes.append(f"narration x{len(voices)}")
+        line = _line_wav(p, work / f"line-n{len(voice.outs)}.wav")
+        voice.add(["-i", str(line)], f"{stereo},adelay={ms}|{ms}")
+    n_narr = len(voice.outs)
+    # dialogue: each talk take's own sound for exactly the source span on screen, one line per take
+    talks: dict[int, list[Seg]] = {}
+    for s in segs:
+        if s.extra.get("talk"):
+            talks.setdefault(s.scene, []).append(s)
+    for ws in talks.values():
+        if not _has_audio(ws[0].src):
+            continue
+        span, ms = sum(w.frames for w in ws) / fps, int(ws[0].at * 1000)
+        line = _line_wav(ws[0].src, work / f"line-d{len(voice.outs)}.wav", ws[0].start, span)
+        voice.add(["-i", str(line)], f"{stereo},adelay={ms}|{ms}")
+    voice_wav = voice.render(work / "bus-voice.wav", total)
+    if n_narr:
+        notes.append(f"narration x{n_narr}")
+    if len(voice.outs) > n_narr:
+        notes.append(f"dialogue bus x{len(voice.outs) - n_narr}")
 
+    music_bus = _Bus()
     music = resolve(plan.get("music"))
+    intro = resolve(plan.get("music_intro"))
+    music_wav = None
     if music:
-        inputs += ["-stream_loop", "-1", "-i", music]
-        fade_out = max(0.0, total - 1.2)
-        parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total:.3f},"
-                     f"volume=0.55,afade=t=in:d=0.4,afade=t=out:st={fade_out:.3f}:d=1.2[m]")
-        if voices:   # duck the bed under narration
-            parts.append("[m][vkey]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=400:makeup=1[md]")
-            mix.append("[md]")
+        drop = title.at if title and title.at > 0 else 0.0
+        bed_at = min(drop, _duration(intro) - 0.15) if intro and drop > 0 else 0.0
+        if bed_at > 0:   # the riser plays from 0 and hands over to the bed on the drop (0.15 s crossfade)
+            music_bus.add(["-i", intro], f"{stereo},atrim=0:{bed_at + 0.15:.3f},volume={BED_VOLUME},"
+                                         f"afade=t=out:st={bed_at:.3f}:d=0.15")
+        length, ms = total - bed_at, int(bed_at * 1000)
+        music_bus.add(["-stream_loop", "-1", "-i", music],
+                      # timestamps from the sample count: a looped mp3's own timestamps run ahead of its
+                      # samples, so trimming by them ended the bed ~0.6 s early
+                      f"{stereo},asetpts=N/SR/TB,atrim=0:{length:.3f},volume={BED_VOLUME},"
+                      f"afade=t=in:d={0.15 if bed_at > 0 else 0.4},afade=t=out:st={max(0.0, length - 1.2):.3f}:d=1.2,"
+                      f"adelay={ms}|{ms}")
+        if voice_wav:   # duck the bed under dialogue and narration (never under SFX)
+            k = music_bus.args.count("-i")
+            # the key is padded past the end: sidechaincompress stops ~0.6 s before its key does
+            post = (f"[bus]apad,atrim=0:{total:.3f}[m];[{k}:a]{stereo},apad=whole_dur={total + 2:.3f}[key];"
+                    f"[m][key]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=400:makeup=1,"
+                    f"apad,atrim=0:{total:.3f}[out]")
+            music_wav = music_bus.render(work / "bus-music.wav", total, post, ["-i", str(voice_wav)])
         else:
-            mix.append("[m]")
-        notes.append("music bed" + (" (ducked)" if voices else ""))
-        n += 1
-    elif voices:
-        parts.append("[vkey]anullsink")
+            music_wav = music_bus.render(work / "bus-music.wav", total)
+        notes.append(("intro riser + " if bed_at > 0 else "") + "music bed" + (" (ducked)" if voice_wav else ""))
 
-    hits = 0
+    fx = _Bus()
+    title_hit = [title.at] if title and plan.get("title_after_scene") is not None and title.at > 0 else []
     for item in plan.get("sfx") or []:
         p = resolve(item.get("path") or item.get("name"))
         if not p:
             continue
-        times = [float(item["at"])] if item.get("at") is not None else changes
+        times = [float(item["at"])] if item.get("at") is not None else changes + title_hit
         gain = float(item.get("gain", 0.8))
         for t in times:
-            inputs += ["-i", p]
             ms = int(max(0.0, t - float(item.get("lead", 0.0))) * 1000)
-            parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={gain},"
-                         f"adelay={ms}|{ms}[s{n}]")
-            mix.append(f"[s{n}]")
-            n += 1
-            hits += 1
+            fx.add(["-i", p], f"{stereo},volume={gain},adelay={ms}|{ms}")
+    hits = len(fx.outs)
     if hits:
         notes.append(f"sfx hits x{hits}")
-    if len(mix) == 1:
-        parts.append(f"[base]anull[aout]")
+    # action scenes: each shown window's own sound (same source span as the picture) on the SFX bus
+    for si, sc in enumerate(plan.get("scenes", [])):
+        gain = float(sc.get("clip_audio_gain") or 0)
+        if gain <= 0 or sc.get("talk"):
+            continue
+        for s in segs:
+            if s.scene != si or s.kind not in ("clip", "crt") or not s.src or not _has_audio(s.src):
+                continue
+            span, out_s, ms = s.extra.get("src_dur", s.frames / fps / s.speed), s.frames / fps, int(s.at * 1000)
+            tempo = f",atempo={1 / s.speed:.4f}" if s.speed != 1.0 else ""
+            fx.add(["-i", s.src], f"atrim=start={s.start:.4f}:duration={span:.4f},asetpts=PTS-STARTPTS,{stereo}{tempo},"
+                                  f"apad,atrim=0:{out_s:.4f},volume={gain},adelay={ms}|{ms}")
+    if len(fx.outs) > hits:
+        notes.append(f"clip audio x{len(fx.outs) - hits}")
+    fx_wav = fx.render(work / "bus-fx.wav", total)
+
+    stems = [w for w in (voice_wav, music_wav, fx_wav) if w]
+    if not stems:
         notes.append("silence")
-    else:
-        parts.append("".join(mix) + f"amix=inputs={len(mix)}:normalize=0:duration=first,"
-                     f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=0:{total:.3f}[aout]")
-    return inputs, ";".join(parts), notes
+        return [], f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[aout]", notes
+    inputs = [a for w in stems for a in ("-i", str(w))]
+    graph = ("".join(f"[{i + 1}:a]" for i in range(len(stems)))
+             + f"amix=inputs={len(stems)}:normalize=0:duration=longest,"
+             f"loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000,apad,atrim=0:{total:.3f}[aout]")
+    return inputs, graph, notes
 
 
 # ---------------------------------------------------------------- public
@@ -669,7 +886,7 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
               str(video)])
         total = sum(s.frames for s in segs) / fps
         if audio:
-            inputs, graph, notes = _audio_graph(plan, segs, total, base)
+            inputs, graph, notes = _audio_graph(plan, segs, total, base, work)
         else:
             inputs, graph, notes = [], f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[aout]", ["silence (--no-audio)"]
         _run(["ffmpeg", "-y", "-v", "error", "-i", str(video)] + inputs +
@@ -685,6 +902,11 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
               "longest_shot_s": round(max((s.frames for s in content), default=0) / fps, 3),
               "audio": notes, "timeline": [asdict(s) for s in segs]}
     report["reuse"] = reuse_report(report["timeline"], fps)
+    title = next((s for s in segs if s.kind == "title"), None)
+    report["title_at"] = title.at if title else None
+    cd = next((s for s in segs if s.extra.get("countdown")), None)
+    report["countdown"] = ({"scene": cd.scene, "label": cd.extra["countdown"]["label"],
+                            "seconds": cd.extra["countdown"]["total"]} if cd else None)
     Path(str(out) + ".cuts.json").write_text(json.dumps(report, indent=1))
     log.info("cut: %s shots, %.1fs, %s cuts/min, audio=%s", report["shots"], total,
              report["cuts_per_minute"], notes)

@@ -672,6 +672,12 @@ def render_week(week: str, media: Path, router, minutes: float = 1.0, quality: s
     finally:
         collect_cache(Path(media), wdir)
     meta.update(_render_fields(entry), files=_finish_files(wdir, entry))
+    _write_json(wdir / "storyboard.json", sb)   # the rendered episode's storyboard, also after a re-render
+    for k in ("next_storyboard", "next_estimate"):
+        meta.pop(k, None)
+    nxt = wdir / "storyboard.next.json"
+    if nxt.exists():
+        nxt.unlink()
     meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     _write_json(wdir / "meta.json", meta)
     update_manifest(media)
@@ -760,6 +766,7 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
     from . import render_storyboard as rs, writer
     for week in weeks:
         writer0 = None  # the writer's paid-call count before this week's (live) storyboard, to count a failed one
+        writer_usd = 0.0  # what the writer billed for this week (a rejected-then-retried reply bills twice)
         at_risk = 0.0   # USD this week may already have spent if it fails part-way (counted on failure, live only)
         if not allow_unfinished and not finished(week):
             print(f"{week}: not over yet, skipped", file=out)
@@ -821,6 +828,8 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
             # the budget counts USD estimates: the Router's X-Comfy-Credits-Used header is in credits, not dollars
             # (it is recorded in meta.json and the ledger as credits_used)
             cost = (est if retry else (m.get("cost_estimate") or 0)) if live else 0
+            if live and not retry:   # cost_estimate counts one writer call; count any extra billed attempt as well
+                cost = float(cost or 0) + max(0.0, writer_usd - rs.PRICE["writer"])
             spent += float(cost or 0)
             print(f"{week}: {m['status']} {m.get('duration')} s, {m.get('failed_shots', 0)} failed shots, "
                   f"{(m.get('files') or {}).get('mp4')}", file=out)

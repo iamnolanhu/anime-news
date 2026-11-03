@@ -428,3 +428,15 @@ def test_same_day_cancel_still_refunds(tmp_path, monkeypatch):
     u.refund("203.0.113.7", "renders", 5.0, day)
     assert u.summary("203.0.113.7") == {"renders_left_for_you": 3, "storyboards_left_for_you": 9,
                                          "budget_remaining_usd": 40.0}
+
+
+def test_pose_reference_outside_the_media_dir_is_ignored(tmp_path):
+    from shot_director import render_storyboard as rs
+    inside = tmp_path / "cast" / "pose.png"
+    inside.parent.mkdir()
+    inside.write_bytes(b"x")
+    assert rs.pose_ref_path(tmp_path, "cast/pose.png") == inside.resolve()
+    assert rs.pose_ref_path(tmp_path, str(inside)) == inside.resolve()
+    assert rs.pose_ref_path(tmp_path, "/etc/hosts") is None
+    assert rs.pose_ref_path(tmp_path, "../../etc/hosts") is None
+    assert rs.pose_ref_path(tmp_path, "") is None

@@ -136,6 +136,23 @@ def shot_prompts(sb: dict, sc: dict, s: dict) -> tuple[str, str]:
 
 # -- cast assets ----------------------------------------------------------------------------------
 
+
+def pose_ref_path(media: Path, ref) -> Path | None:
+    """A pose drawing must be a file under the media dir. A request storyboard may name any path (cast[].poses[].ref_image);
+    the engine never reads, let alone uploads, a file outside its own media dir."""
+    if not ref:
+        return None
+    try:
+        root = Path(media).resolve()
+        p = Path(str(ref)).expanduser()
+        p = (p if p.is_absolute() else root / p).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not p.is_relative_to(root) or not p.is_file():
+        print(f"[anime-news] pose reference ignored (not a file under the media dir): {ref}", file=sys.stderr)
+        return None
+    return p
+
 def cast_assets(router, media: Path, sb: dict) -> tuple[dict, dict]:
     """(refs, voices): the style sheet, a character sheet per talking non-anchor member, a voice sample per
     talking member. Live only; each is made once and cached in the media dir."""
@@ -156,7 +173,7 @@ def cast_assets(router, media: Path, sb: dict) -> tuple[dict, dict]:
                 prompt = (f"{writer.STYLE_LEAD}. Character model sheet still: {m['name']}, {m['role']}: {m['look']}. "
                           f"Medium shot, facing the camera, neutral dark studio background, full face clearly visible."
                           f"{pose_part} {writer.SAFETY_TAIL}.")
-                pose_ref = Path(pose["ref_image"]).expanduser() if pose.get("ref_image") else None
+                pose_ref = pose_ref_path(media, pose.get("ref_image"))
                 try:
                     style.generate_styled_frame(router, prompt, path, media, pose_ref=pose_ref)
                 except Exception as e:  # noqa: BLE001 - a missing sheet only weakens consistency

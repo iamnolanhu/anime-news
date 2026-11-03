@@ -11,6 +11,7 @@ import { HeadlinePanel } from "./headline-panel";
 import { KeyPanel } from "./key-panel";
 import { ProjectsPanel } from "./projects-panel";
 import { isTerminal, RenderPanel } from "./render-panel";
+import { StepNumbers, StepPlaceholder, stepNumbers } from "./step";
 import { StoryboardEditor } from "./storyboard-editor";
 
 const HEALTH_EVERY_MS = 4000;
@@ -211,7 +212,11 @@ export function Studio() {
     return <div className="meta mx-auto max-w-[1100px] px-4 py-16 sm:px-6">Loading the Studio</div>;
   }
 
+  // Number the panels from the list actually rendered, so the sequence never skips (placeholders count).
+  const numbers = stepNumbers(["engine", ...(hosted ? [] : ["key"]), "headline", "storyboard", "render", "projects"]);
+
   return (
+    <StepNumbers.Provider value={numbers}>
     <div className="mx-auto max-w-[1100px] space-y-6 px-4 pt-10 sm:px-6 lg:pt-14">
       <header className="mb-10">
         <p className="kicker">Studio {mock ? "/ demo mode" : ""}</p>
@@ -274,7 +279,12 @@ export function Studio() {
             }}
           />
         </>
-      ) : null}
+      ) : (
+        <>
+          <StepPlaceholder id="storyboard" title="Storyboard" note="Appears after the storyboard is written." />
+          <StepPlaceholder id="render" title="Render" note="Appears after the render starts." />
+        </>
+      )}
 
       <ProjectsPanel
         projects={projects}
@@ -299,5 +309,6 @@ export function Studio() {
         }}
       />
     </div>
+    </StepNumbers.Provider>
   );
 }

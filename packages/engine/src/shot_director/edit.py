@@ -347,14 +347,21 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 if dur > 0.5:
                     info[clip] = (dur, *clip_profile(clip, dur))
         profiles.append(info)
-    best = max(((v[2], c, v[1], v[0]) for info in profiles for c, v in info.items()
-                if v[2] >= max(SHARP_GATE * v[3], SHARP_FLOOR)), default=None)   # the gate applies to the cold open too
     span = title.frames / fps
-    if best and best[3] - 0.05 >= span:   # cold open: title over the strongest frame in the whole episode
-        _, clip, t, dur = best
-        title.src, title.start = clip, min(max(0.0, t - 0.2), dur - 0.05 - span)
+    # cold open: the title over the strongest WINDOW in the whole episode. The absolute gate applies here as well: the
+    # candidate frame and the whole window it opens (first, middle and last frame) must pass, else the title plays alone.
+    ranked = sorted(((v[2], c, v[1], v[0], v[3]) for info in profiles for c, v in info.items()), reverse=True)
+    for score, clip, t, dur, med in ranked:
+        gate = max(SHARP_GATE * med, SHARP_FLOOR)
+        if score < gate or dur - 0.05 < span:
+            continue
+        start = min(max(0.0, t - 0.2), dur - 0.05 - span)
+        if seg_sharpness(clip, start, span) < gate:
+            continue
+        title.src, title.start = clip, start
         title.extra["src_dur"] = span
-        ledger.take(clip, title.start, title.start + span)
+        ledger.take(clip, start, start + span)
+        break
     for si, scene in enumerate(plan.get("scenes", [])):
         cap = scene["caption"] if "caption" in scene else (scene.get("beat") or "")  # "" = no subtitles
         action = bool(scene.get("action")) or any(w in str(scene.get("beat", "")).lower() for w in ACTION_WORDS)

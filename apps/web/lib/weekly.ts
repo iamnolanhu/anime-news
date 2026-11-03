@@ -2,6 +2,9 @@ import { formatDuration, type Episode } from "@/lib/episodes";
 
 /** The hosted engine's weekly manifest, reached through this site's /engine proxy (see proxy.ts). */
 export const WEEKLY_MANIFEST_URL = "/engine/api/weekly";
+/** Static copy of the manifest (media on the CDN), used when the engine fails or NEXT_PUBLIC_WEEKLY_SOURCE=static. */
+export const WEEKLY_STATIC_MANIFEST_URL = "/data/weekly.json";
+export const WEEKLY_STATIC_ONLY = process.env.NEXT_PUBLIC_WEEKLY_SOURCE === "static";
 /** The manifest is re-read this often while a page stays open. */
 export const WEEKLY_REFRESH_MS = 60_000;
 

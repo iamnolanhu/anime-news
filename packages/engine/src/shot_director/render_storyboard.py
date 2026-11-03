@@ -60,7 +60,8 @@ def _cast(sb: dict) -> dict:
 
 
 def sheet_path(media: Path, member: dict) -> Path:
-    return media / f"cast-{member['id']}-{_h(member['look'])}.png"
+    talk_pose = ((member.get("poses") or {}).get("talk") or {}).get("phrase", "")
+    return media / f"cast-{member['id']}-{_h(member['look'] + talk_pose)}.png"
 
 
 def voice_path(media: Path, member: dict) -> Path:
@@ -150,11 +151,14 @@ def cast_assets(router, media: Path, sb: dict) -> tuple[dict, dict]:
         if sp != "anchor":
             path = sheet_path(media, m)
             if not (path.exists() and path.stat().st_size):
+                pose = (m.get("poses") or {}).get("talk") or {}
+                pose_part = f" She {pose['phrase']}." if pose.get("phrase") else ""
                 prompt = (f"{writer.STYLE_LEAD}. Character model sheet still: {m['name']}, {m['role']}: {m['look']}. "
-                          f"Medium shot, facing the camera, neutral dark studio background, full face clearly visible. "
-                          f"{writer.SAFETY_TAIL}.")
+                          f"Medium shot, facing the camera, neutral dark studio background, full face clearly visible."
+                          f"{pose_part} {writer.SAFETY_TAIL}.")
+                pose_ref = Path(pose["ref_image"]).expanduser() if pose.get("ref_image") else None
                 try:
-                    style.generate_styled_frame(router, prompt, path, media)
+                    style.generate_styled_frame(router, prompt, path, media, pose_ref=pose_ref)
                 except Exception as e:  # noqa: BLE001 - a missing sheet only weakens consistency
                     print(f"[anime-news] cast sheet {sp} failed: {type(e).__name__}: {str(e)[:200]}", file=sys.stderr)
             refs[sp] = path if path.exists() else None

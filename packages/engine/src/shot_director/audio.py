@@ -82,13 +82,13 @@ def _post_audio(model: str, body: dict, out: Path) -> Path:
     base = f"{BASE_URL}/v2/models/{model}/requests"
     deadline = time.time() + 300
     while time.time() < deadline:
-        _, hdrs, status = lr._req_full("GET", f"{base}/{rid}/status")
+        _, hdrs, status = lr._req_full("GET", f"{base}/{rid}/status", job=rid)   # one charge per job
         if status.get("error_type"):
             raise RouterError(f"Router job failed: {lr._error_text(status)}")
         if str(status.get("status", "")).upper() == "COMPLETED":
             rq = urllib.request.Request(f"{base}/{rid}", headers={"X-API-Key": key, "Accept": "*/*"})
             with urllib.request.urlopen(rq, timeout=120) as r:
-                CREDITS.record(r.headers)
+                CREDITS.record(r.headers, rid)
                 if r.status == 200:
                     ctype, data = r.headers.get("Content-Type", ""), r.read()
                     if "json" not in ctype:

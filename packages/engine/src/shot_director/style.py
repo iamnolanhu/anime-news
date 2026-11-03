@@ -16,20 +16,39 @@ SHEET_NAME = "style-sheet.png"
 ASPECT_RATIO = "16:9"
 RESOLUTION = "1k"
 
-SHEET_PROMPT = (
+SHEET_TEMPLATE = (
     "2D cel anime frame, drawn animation, not a photograph, not a 3D render. A still from an original "
-    "late-1980s OVA anime: an anime newsroom at night. The Anchor, an original character, a stern "
-    "middle-aged man with a short silver crew cut and round glasses, dark jacket with gold trim and a PRESS "
-    "badge on the lapel, sits at a long news "
+    "late-1980s OVA anime: an anime newsroom at night. {anchor} sits at a long news "
     "desk in front of a wall of glowing world-map monitors showing invented countries. Heavy black ink line "
     "art, hatching on the face, flat cel shading, flat painted background, film grain, VHS softness, teal "
     "shadows against burnt-orange highlights, high-contrast dramatic lighting. Safe for work, no logos, "
     "no text except the word PRESS on the badge, no real people.")
+BUILTIN_ANCHOR = ("The Anchor, an original character, a stern middle-aged man with a short silver crew cut and round "
+                  "glasses, dark jacket with gold trim and a PRESS badge on the lapel,")
+SHEET_PROMPT = SHEET_TEMPLATE.format(anchor=BUILTIN_ANCHOR)
+
+
+def sheet_prompt(media_dir: Path) -> str:
+    """The style-sheet prompt: around the anchor of <media>/cast.json when there is one, else the built-in anchor.
+    The sheet is made once; after changing the cast file's anchor, delete style-sheet.png to regenerate it."""
+    from .storyboard import load_cast_file
+    anchor = next((c for c in load_cast_file(media_dir) or [] if c["id"] == "anchor"), None)
+    if not anchor:
+        return SHEET_PROMPT
+    return SHEET_TEMPLATE.format(anchor=f"The Anchor, {anchor['name']}, an original character, {anchor['look']},")
+
 
 REFERENCE_LEAD = (
     "Use the reference image only as the style guide: match its hand-inked heavy line art, flat cel shading, "
     "film grain, VHS softness and teal-shadow / burnt-orange-highlight palette exactly. Do not copy its "
     "composition unless the scene below is the newsroom. New scene: ")
+
+
+POSE_REFERENCE_LEAD = (
+    "Image 1 is the style guide only: match its hand-inked heavy line art, flat cel shading, film grain, VHS softness "
+    "and teal-shadow / burnt-orange-highlight palette exactly; do not copy its characters or composition. Image 2 is "
+    "a grey mannequin drawing used only as a pose guide: copy the head, arm and hand pose only; ignore its body "
+    "proportions, grey colour, outline style and blank background. New scene: ")
 
 
 def sheet_path(media_dir: Path) -> Path:
@@ -57,7 +76,7 @@ def ensure_style_sheet(media_dir: Path, router: LiveRouter | None = None) -> Pat
     if getattr(router, "mode", "") != "live":
         return None
     try:
-        result = router._run_model(IMAGE_MODEL, {"prompt": SHEET_PROMPT, "aspect_ratio": ASPECT_RATIO,
+        result = router._run_model(IMAGE_MODEL, {"prompt": sheet_prompt(media_dir), "aspect_ratio": ASPECT_RATIO,
                                                  "resolution": RESOLUTION, "grounding": False})
         tmp = path.with_name(f".{SHEET_NAME}.tmp")
         router._download(_image_url(router, result), tmp)
@@ -76,13 +95,18 @@ def styled_frame_kwargs(media_dir: Path) -> dict:
     return {"images": [base64.b64encode(path.read_bytes()).decode()]}
 
 
-def generate_styled_frame(router, prompt: str, out: Path, media_dir: Path) -> Path:
-    """Drop-in for router.generate_frame(prompt, body, out) that adds the style sheet as a reference.
-    Mock router, or no sheet on disk: falls through to the plain generate_frame."""
+def generate_styled_frame(router, prompt: str, out: Path, media_dir: Path, pose_ref: Path | None = None) -> Path:
+    """Drop-in for router.generate_frame(prompt, body, out) that adds the style sheet as a reference, and
+    `pose_ref` (a pose-library mannequin drawing) as a second one when it exists: FLUX 3 image takes 1-10
+    references. Mock router, or no sheet on disk: falls through to the plain generate_frame."""
     ref = styled_frame_kwargs(media_dir) if getattr(router, "mode", "") == "live" else {}
     if not ref:
         return router.generate_frame(prompt, "anime", out)
-    body = {"prompt": REFERENCE_LEAD + prompt, "aspect_ratio": ASPECT_RATIO, "resolution": RESOLUTION,
+    lead = REFERENCE_LEAD
+    if pose_ref is not None and Path(pose_ref).is_file():
+        ref["images"].append(base64.b64encode(Path(pose_ref).read_bytes()).decode())
+        lead = POSE_REFERENCE_LEAD
+    body = {"prompt": lead + prompt, "aspect_ratio": ASPECT_RATIO, "resolution": RESOLUTION,
             "grounding": False, **ref}
     result = router._run_model(IMAGE_MODEL, body)
     return router._download(_image_url(router, result), out)

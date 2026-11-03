@@ -39,9 +39,47 @@ DEFAULT_VOICES = {"anchor": "onwK4e9ZLuTAKqWW03F9", "operative": "XB0fDUnXU5powF
                   "analyst": "N2lVS1w4EtoT3dr4eOWO"}
 
 
-def default_cast() -> list[dict]:
+CAST_FILE = "cast.json"         # optional, in the media dir: replaces the built-in cast (schema: docs/STORYBOARD.md)
+CORE_CAST = tuple(writer.CAST)  # anchor, operative, analyst: a cast file must keep these ids
+POSE_KINDS = ("talk", "action", "still")
+POSE_MAX_WORDS = 25
+TRAIT_MAX_WORDS = 30
+
+
+def builtin_cast() -> list[dict]:
     return [{"id": cid, "name": c["name"], "role": c["role"], "look": c["look"], "voice": DEFAULT_VOICES[cid]}
             for cid, c in writer.CAST.items()]
+
+
+def cast_file(media=None):
+    from pathlib import Path
+
+    from . import config
+    return Path(media or config.media_dir()) / CAST_FILE
+
+
+def load_cast_file(media=None) -> list[dict] | None:
+    """The cast from <media>/cast.json, or None when there is no file or it is invalid (with a warning:
+    a broken cast file never stops an episode, it falls back to the built-in cast)."""
+    path = cast_file(media)
+    if not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_text())
+        members = doc.get("cast") if isinstance(doc, dict) else doc
+        cast = _norm_members(members, {c["id"]: c for c in builtin_cast()})
+        missing = [cid for cid in CORE_CAST if cid not in {c["id"] for c in cast}]
+        if missing:
+            raise ValueError(f"missing cast ids {', '.join(missing)}")
+        return cast
+    except (OSError, ValueError) as e:
+        print(f"[anime-news] {path} ignored ({e}); using the built-in cast", file=sys.stderr)
+        return None
+
+
+def default_cast() -> list[dict]:
+    """<media>/cast.json when present and valid, else the built-in cast (writer.CAST)."""
+    return load_cast_file() or builtin_cast()
 
 
 class StoryboardError(ValueError):
@@ -123,11 +161,27 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")[:24]
 
 
-def _norm_cast(cast: object) -> list[dict]:
-    if not isinstance(cast, list) or not cast:
-        return default_cast()
+def _norm_poses(poses: object) -> dict:
+    """{kind: {"phrase", "id"?, "ref_image"?}} for talk / action / still; a bare string is the phrase."""
+    out = {}
+    if not isinstance(poses, dict):
+        return out
+    for kind in POSE_KINDS:
+        v = poses.get(kind)
+        phrase = _words((v.get("phrase") if isinstance(v, dict) else v) or "", POSE_MAX_WORDS)
+        if not phrase:
+            continue
+        entry = {"phrase": phrase}
+        if isinstance(v, dict):
+            entry.update({k: str(v[k]).strip() for k in ("id", "ref_image") if str(v.get(k) or "").strip()})
+        out[kind] = entry
+    return out
+
+
+def _norm_members(cast: object, defaults: dict) -> list[dict]:
     out, seen = [], set()
-    defaults = {c["id"]: c for c in default_cast()}
+    if not isinstance(cast, list):
+        return out
     for i, c in enumerate(cast):
         if not isinstance(c, dict):
             continue
@@ -136,11 +190,23 @@ def _norm_cast(cast: object) -> list[dict]:
             cid += "_x"
         seen.add(cid)
         base = defaults.get(cid, {})
-        out.append({"id": cid, "name": _clip_chars(c.get("name") or base.get("name") or cid.upper(), 40),
-                    "role": _clip_chars(c.get("role") or base.get("role") or "an original character", 60),
-                    "look": _words(c.get("look") or base.get("look") or "an original anime character", 45),
-                    "voice": str(c.get("voice") or base.get("voice") or "").strip()})
-    return out or default_cast()
+        m = {"id": cid, "name": _clip_chars(c.get("name") or base.get("name") or cid.upper(), 40),
+             "role": _clip_chars(c.get("role") or base.get("role") or "an original character", 60),
+             "look": _words(c.get("look") or base.get("look") or "an original anime character", 45),
+             "voice": str(c.get("voice") or base.get("voice") or "").strip()}
+        trait = _words(c.get("trait") or base.get("trait") or "", TRAIT_MAX_WORDS)
+        poses = _norm_poses(c.get("poses")) or base.get("poses")
+        if trait:
+            m["trait"] = trait
+        if poses:
+            m["poses"] = poses
+        out.append(m)
+    return out
+
+
+def _norm_cast(cast: object) -> list[dict]:
+    defaults = {c["id"]: c for c in default_cast()}
+    return _norm_members(cast, defaults) or list(defaults.values())
 
 
 def normalize(sb: object) -> dict:
@@ -248,11 +314,11 @@ _TEMPLATE = {
         ("action", [], "", "Extreme close-up of a red countdown clock in a dark war room, digits flipping, sparks of light", "crash_zoom"),
         ("insert", [], "", "Close-up of a teletype printing the words \"{h}\" on yellowed paper", "static"),
         ("action", [], "", "Wide shot of searchlights sweeping across giant tower screens that all read \"{h}\"", "crane_up"),
-        ("still", [], "", "Extreme close-up of KUROGANE's round glasses reflecting a glowing monitor", "dolly_in"),
+        ("still", [], "", "Extreme close-up of {anchor}'s eyes reflecting a glowing monitor", "dolly_in"),
     ]),
     "setup": ("the anime newsroom, a long desk before a wall of world-map monitors", "{short}",
               "Sources confirm it. {h}. Officials have convened. Nobody was ready.", [
-        ("talk", ["anchor"], "Good evening. Tonight: {short_line}", "Medium shot of KUROGANE at the news desk, facing camera", "dolly_in"),
+        ("talk", ["anchor"], "Good evening. Tonight: {short_line}", "Medium shot of {anchor} at the news desk, facing camera", "dolly_in"),
         ("action", [], "", "Overhead shot of a war-room table where an oversized absurd prop literalizes the headline, staffers recoil", "handheld"),
         ("still", [], "", "Low angle of invented officials staring in silence at a glowing map", "static"),
         ("insert", [], "", "Close-up of a classified folder stamped URGENT with \"{h}\" typed on the cover", "static"),
@@ -260,7 +326,7 @@ _TEMPLATE = {
     ]),
     "escalation": ("a rooftop over the invented capital at dusk, painted sky, wind", "It is getting bigger.",
                    "The situation escalated. Then it escalated again. The clock is still running.", [
-        ("talk", ["operative"], "Vex here. It's worse than we thought.", "Close-up of VEX whispering into her wrist on a windy rooftop", "handheld"),
+        ("talk", ["operative"], "{operative_spoken} here. It's worse than we thought.", "Close-up of {operative} whispering into her wrist on a windy rooftop", "handheld"),
         ("action", [], "", "Wide shot of the absurd prop growing to the size of a building, citizens point upward in shock", "crane_up"),
         ("still", [], "", "Extreme close-up of a citizen's wide shocked eyes, hatching, sweat drop", "crash_zoom"),
         ("insert", [], "", "Close-up of a ticker board flipping wildly, every line reads \"{short}\"", "static"),
@@ -268,7 +334,7 @@ _TEMPLATE = {
     ]),
     "turn": ("a cramped lab wallpapered with charts and red string", "It's all connected.",
              "The analysts have a theory. The theory has charts.", [
-        ("talk", ["analyst"], "It's all connected. I have charts. So many charts.", "Close-up of DR. HAKASE before a red-string evidence board", "dolly_in"),
+        ("talk", ["analyst"], "It's all connected. I have charts. So many charts.", "Close-up of {analyst} before a red-string evidence board", "dolly_in"),
         ("action", [], "", "Medium shot of red string snapping taut across a wall of pinned photos of invented landmarks", "orbit"),
         ("still", [], "", "Overhead shot of a desk buried in coffee mugs and annotated maps", "static"),
         ("insert", [], "", "Close-up of a chart whose arrow crashes straight down off the page", "crash_zoom"),
@@ -279,14 +345,14 @@ _TEMPLATE = {
         ("action", [], "", "Wide shot of two invented rival bureaucrats in a standoff, each holding a giant rubber stamp", "orbit"),
         ("insert", [], "", "Close-up of a wanted poster that reads \"{short}\" flapping in the wind", "static"),
         ("action", [], "", "Medium shot as both stamps slam down on one form at once, white flash, speed lines", "crash_zoom"),
-        ("talk", ["operative"], "Nobody blinks. Nobody files. Nobody wins.", "Close-up of VEX watching from behind a water trough", "dolly_in"),
+        ("talk", ["operative"], "Nobody blinks. Nobody files. Nobody wins.", "Close-up of {operative} watching from behind a water trough", "dolly_in"),
         ("still", [], "", "Wide shot of the whole town buried in stamped paperwork", "dolly_out"),
     ]),
     "sign_off": ("the anime newsroom after hours, one monitor still glowing", "That was the news.",
                  "It will happen again. We will be here.", [
         ("action", [], "", "Medium shot of the countdown clock hitting zero, a tiny paper flag pops out", "crash_zoom"),
         ("still", [], "", "Wide shot of the dark studio, one monitor glowing with \"{short}\"", "crane_up"),
-        ("talk", ["anchor"], "It will happen again. " + SIGN_OFF, "Close-up of KUROGANE folding his hands, perfectly deadpan", "dolly_out"),
+        ("talk", ["anchor"], "It will happen again. " + SIGN_OFF, "Close-up of {anchor} at the desk, hands folded, perfectly deadpan", "dolly_out"),
     ]),
 }
 
@@ -296,7 +362,10 @@ def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
     h = " ".join(headline.split()).replace('"', "'")
     words = h.split()
     short = " ".join(words[:6]) + ("..." if len(words) > 6 else "")
-    fill = {"h": h, "short": short, "short_line": _clip_chars(short, LINE_MAX - 22)}
+    members = default_cast()
+    names = {c["id"]: c["name"] for c in members}
+    fill = {"h": h, "short": short, "short_line": _clip_chars(short, LINE_MAX - 22), **names,
+            "operative_spoken": names["operative"].title()}
     scenes = []
     for i, act in enumerate(act_plan(scene_count(minutes)), 1):
         setting, caption, narration, shots = _TEMPLATE[act]
@@ -308,7 +377,7 @@ def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
     return normalize({"headline": h, "minutes": minutes, "source_text_excerpt": text[:EXCERPT_MAX],
                       "logline": f"{SERIES}: \"{h}\", briefed like a war-room emergency and taken literally.",
                       "title_card": _clip_chars(short.upper(), 30), "countdown": "DEADLINE IN",
-                      "cast": default_cast(), "scenes": scenes, "writer": "template"})
+                      "cast": members, "scenes": scenes, "writer": "template"})
 
 
 # -- the writer -----------------------------------------------------------------------------------
@@ -322,6 +391,7 @@ THE SHOW
 
 RECURRING CAST (original characters; use their NAMES in lines and prompts; the cast ids are fixed)
 {cast}
+When a member listed with Poses appears in a talk, action or still shot, put her pose for that shot kind into the prompt right after the shot size (it keeps poses natural and varied).
 You may add at most two new invented characters (original archetypes, never a real person) to "cast".
 
 SHOT KINDS (mix them in every scene; no two consecutive shots show the same composition)
@@ -354,16 +424,26 @@ Source text (may be empty; use it for facts, never for real names of people):
 Episode length: {minutes} minutes. Write the JSON object only."""
 
 
-def _cast_block() -> str:
-    return "\n".join(f"- {c['name']} (id \"{c['id']}\", {c['role']}): {c['look']}; {writer.CAST[c['id']]['trait']}."
-                     for c in default_cast())
+def _cast_block(cast: list[dict]) -> str:
+    """One line per member; a member with poses gets its pose phrase per shot kind (cast[].poses)."""
+    lines = []
+    for c in cast:
+        trait = c.get("trait") or writer.CAST.get(c["id"], {}).get("trait") or ""
+        line = f"- {c['name']} (id \"{c['id']}\", {c['role']}): {c['look']}" + (f"; {trait}" if trait else "") + "."
+        poses = c.get("poses") or {}
+        if poses:
+            line += " Poses: " + "; ".join(f"{k} shot: she {poses[k]['phrase']}" for k in POSE_KINDS if k in poses) + "."
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def write(headline: str, text: str = "", minutes: float = 1.0, style: str = "") -> dict:
     """One Router chat call (one retry with the validation error on a bad reply). Raises on failure."""
     n = scene_count(minutes)
     acts = act_plan(n)
-    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(), scenes=n, acts=", ".join(acts),
+    base_cast = default_cast()
+    base_ids = {c["id"] for c in base_cast}
+    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(base_cast), scenes=n, acts=", ".join(acts),
                                   shots=round(n * 4.5), sign_off=SIGN_OFF, moves=", ".join(MOVES),
                                   style=f"- Visual style direction from the user: {style}\n" if style else "")
     user = USER_PROMPT.format(headline=headline.replace('"', "'"), source=text[:SOURCE_MAX] or "(none)",
@@ -378,8 +458,8 @@ def write(headline: str, text: str = "", minutes: float = 1.0, style: str = "") 
             doc = json.loads(writer._strip_fences(reply))
             if not isinstance(doc, dict):
                 raise StoryboardError("reply is not a JSON object")
-            cast = default_cast() + [c for c in (doc.get("cast") or []) if isinstance(c, dict)
-                                     and _slug(c.get("id") or c.get("name") or "") not in writer.CAST]
+            cast = base_cast + [c for c in (doc.get("cast") or []) if isinstance(c, dict)
+                                and _slug(c.get("id") or c.get("name") or "") not in base_ids]
             sb = normalize({**doc, "headline": headline, "minutes": minutes, "cast": cast[:5],
                             "source_text_excerpt": text[:EXCERPT_MAX], "writer": writer.CHAT_MODEL,
                             "style": style})

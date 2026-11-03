@@ -34,7 +34,7 @@ storyboard is checked by the same rules as the writer's reply.
 | --- | --- |
 | `headline` | required, non-empty |
 | `minutes` | above 0, at most 5 (default 1) |
-| `cast[]` | `id` (slug), `name`, `role`, `look` (drawn-anime description, used in every frame prompt the member is in), `voice` (an ElevenLabs voice id used as Seedance's voice reference; anything else falls back to a default voice). Missing or empty: the default cast (KUROGANE, VEX, DR. HAKASE). Original characters only, never a real person. |
+| `cast[]` | `id` (slug), `name`, `role`, `look` (drawn-anime description, used in every frame prompt the member is in), `voice` (an ElevenLabs voice id used as Seedance's voice reference; anything else falls back to a default voice). Optional: `trait` (personality, given to the writer), `poses` (see "The cast file"). Missing or empty: the default cast (`<media>/cast.json` when present, else KUROGANE, VEX, DR. HAKASE). Original characters only, never a real person. |
 | `scenes[].act` | `cold_open`, `setup`, `escalation`, `turn`, `climax`, `sign_off`. A cold open has no caption and no narration. |
 | `scenes[].setting` | where the scene happens; added to every frame prompt of the scene |
 | `scenes[].caption` | the subtitle of the scene's non-talk cuts (60 chars max) |
@@ -49,6 +49,42 @@ storyboard is checked by the same rules as the writer's reply.
 
 Extra optional fields: `title_card` (the 9:16 export's title and the cut's title card), `countdown` (label of the red
 countdown on the escalation scene), `style` (extra visual direction), `writer` (which model wrote it).
+
+## The cast file
+
+`<media>/cast.json` (media dir: `ANIME_NEWS_MEDIA`, default `~/.anime-news/media`) replaces the built-in cast with no
+code change: the writer's cast list, the mock template's names, every new storyboard's `cast`, and the series style
+sheet's anchor all come from it. It must keep the three fixed ids `anchor`, `operative` (the field reporter) and
+`analyst`; a file that is unreadable or misses one of them is ignored with a warning (the built-in cast is used).
+Fields a member leaves out fall back to the built-in member with the same id.
+
+```json
+{"cast": [
+  {"id": "anchor", "name": "SHION", "role": "the Anchor",
+   "look": "adult woman, mid-20s, long straight silver-lavender hair in a hime cut, thin gold-rimmed glasses, black blazer with gold trim",
+   "trait": "perfectly composed; one raised eyebrow is the whole punchline",
+   "voice": "<ElevenLabs voice id>",
+   "poses": {"talk":   {"id": "upper80v2_P019", "phrase": "tucks a strand of hair behind her ear",
+                        "ref_image": "/abs/path/to/a/small/copy/of/upper80v2_P019_front.png"},
+             "action": "speaks with one hand open in a gesture, the other holding her notes, mid-sentence",
+             "still":  {"id": "upper80v2_P013", "phrase": "rests her chin on both palms"}}},
+  {"id": "operative", "name": "HINA", "role": "the Field Reporter", "look": "..."},
+  {"id": "analyst", "name": "DR. RENA", "role": "the Analyst", "look": "..."}
+]}
+```
+
+- `poses` (optional): a pose per shot kind (`talk`, `action`, `still`), from the pose-library skill (`pose-library pick
+  --framing hero --scene "news desk" --with-ref`). A string is the phrase; an object adds the pose `id` and
+  `ref_image`. The phrase is written after "She" (25 words max). The writer gets each member's poses and puts the
+  pose for the shot kind into the shot prompt.
+- `ref_image` (optional): a pose-library mannequin drawing on this machine. When a non-anchor speaker's character
+  sheet is generated, it goes to FLUX 3 image as a second reference after the style sheet (the model takes 1-10
+  references), with the instruction to copy the pose only. A missing file means text only. The drawings may be used
+  as references but not redistributed: point at the local gallery clone (or a shrunk copy, about 0.12 MP), never
+  commit them.
+- Changing a member's `look` or talk pose gives a new character-sheet file name, so the sheet is made again on the
+  next live render. The series style sheet is made once: after changing the anchor, delete
+  `<media>/style-sheet.png` and the next live render regenerates it around the new anchor (one FLUX image).
 
 ## Rules
 
@@ -71,7 +107,9 @@ In the media dir (default `~/.anime-news/media`), prefixed by the episode id:
 (the edit plan), `<epid>.mp4`, `<epid>.mp4.cuts.json`, and `<epid>.9x16.mp4` with `--vertical`.
 The ledger (`episodes.json`) gets one entry per render: headline, duration, cut shots, cuts per minute, reuse,
 quality, `cost_estimate` (USD, computed before the render) and `credits_used` (the sum of the
-`X-Comfy-Credits-Used` response headers, when the Router sends them).
+`X-Comfy-Credits-Used` response headers, when the Router sends them; a queued job reports its charge on both the
+completed status poll and the result fetch, and the meter counts it once per job. Entries written before
+2026-11-03 counted it twice: halve their `credits_used`).
 
 ## Spend
 

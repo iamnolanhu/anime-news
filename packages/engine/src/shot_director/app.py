@@ -32,7 +32,9 @@ from .router_client import ENGINES, IMAGE_MODEL, VIDEO_MODEL, RouterError, make_
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"
-DEFAULT_ORIGINS = "https://anime-news.vercel.app,https://*.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
+# Exact origins only: a *.vercel.app wildcard would let any Vercel-hosted page set a user's key and start paid renders.
+# Patterns with * still work when set explicitly in ANIME_NEWS_ALLOWED_ORIGINS (e.g. for preview deploys).
+DEFAULT_ORIGINS = "https://anime-news-nine.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 MAX_MINUTES = 5.0
 
 

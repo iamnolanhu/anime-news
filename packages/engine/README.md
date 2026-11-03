@@ -14,4 +14,6 @@ uv run --group dev pytest                    # offline tests (mock mode, no netw
 ```
 
 Storyboard schema: `docs/STORYBOARD.md`. HTTP contract: `/api/health`, `/api/config`, `/api/storyboard`,
-`/api/render`, `/api/jobs/{id}`, `/api/episodes`, `/media/{file}`. More in the repository README one level up.
+`/api/render`, `/api/jobs/{id}`, `/api/episodes`, `/media/{file}`. Browsers may call it only from the allowed origins:
+`ANIME_NEWS_ALLOWED_ORIGINS` (comma list; default `https://anime-news-nine.vercel.app,http://localhost:3000,http://127.0.0.1:3000`);
+preflights carry `Access-Control-Allow-Private-Network: true`. More in the repository README one level up.

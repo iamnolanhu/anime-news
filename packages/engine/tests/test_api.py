@@ -34,7 +34,7 @@ def test_storyboard_validation(tmp_path):
 
 def test_cors_preflight_and_private_network(tmp_path):
     c = client(tmp_path)
-    for origin in ("https://anime-news.vercel.app", "http://localhost:3000", "https://anime-news-git-x.vercel.app"):
+    for origin in ("https://anime-news-nine.vercel.app", "http://localhost:3000", "http://127.0.0.1:3000"):
         r = c.options("/api/render", headers={"Origin": origin, "Access-Control-Request-Method": "POST",
                                                "Access-Control-Request-Private-Network": "true"})
         assert r.status_code == 204
@@ -43,9 +43,27 @@ def test_cors_preflight_and_private_network(tmp_path):
         assert "PUT" in r.headers["access-control-allow-methods"]
         assert "content-type" in r.headers["access-control-allow-headers"]
         assert c.get("/api/health", headers={"Origin": origin}).headers["access-control-allow-origin"] == origin
-    r = c.options("/api/render", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"})
+
+
+def test_unlisted_origins_get_no_cors_grant(tmp_path):
+    c = client(tmp_path)
+    for origin in ("https://evil.example", "https://anime-news.vercel.app", "https://some-other-app.vercel.app",
+                   "https://anime-news-nine.vercel.app.evil.example", "http://localhost:3001"):
+        r = c.options("/api/render", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        assert r.status_code == 403
+        assert "access-control-allow-origin" not in r.headers
+        r = c.put("/api/config", json={"comfy_api_key": "x"}, headers={"Origin": origin})
+        assert "access-control-allow-origin" not in r.headers
+        assert "access-control-allow-origin" not in c.get("/api/health", headers={"Origin": origin}).headers
+
+
+def test_allowed_origins_env_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANIME_NEWS_ALLOWED_ORIGINS", "https://*.example.dev")
+    c = client(tmp_path)
+    r = c.options("/api/render", headers={"Origin": "https://preview-1.example.dev", "Access-Control-Request-Method": "POST"})
+    assert r.headers["access-control-allow-origin"] == "https://preview-1.example.dev"
+    r = c.options("/api/render", headers={"Origin": "https://anime-news-nine.vercel.app", "Access-Control-Request-Method": "POST"})
     assert "access-control-allow-origin" not in r.headers
-    assert "access-control-allow-origin" not in c.get("/api/health", headers={"Origin": "https://evil.example"}).headers
 
 
 def test_full_flow_config_storyboard_render_job_done(tmp_path):

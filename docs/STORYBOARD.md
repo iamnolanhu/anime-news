@@ -49,6 +49,8 @@ storyboard is checked by the same rules as the writer's reply.
 
 Extra optional fields: `title_card` (the 9:16 export's title and the cut's title card), `countdown` (label of the red
 countdown on the escalation scene; default `NEXT BRIEFING IN`), `style` (extra visual direction), `writer` (which model wrote it).
+Weekly episodes add `week` (`2026-W44`), `segments` (`[{topic, headline, source_text}]`) and a scene-level `topic`
+(`ai`, `crypto`, `politics`, `tech`, `markets`, or `markets_10s` for the markets insert); see [WEEKLY.md](WEEKLY.md).
 
 ## Rules
 

@@ -418,3 +418,29 @@ def test_the_rendered_line_is_not_trimmed(media, tmp_path, path):
     quiet = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", p.stderr)]
     assert not [q for q in quiet if v["at"] + 0.1 < q < v["at"] + v["file_dur"] - 0.1], (v, quiet)
 
+
+def test_a_line_never_meets_a_cut_in_its_first_08s_on_a_short_opening_angle(media, tmp_path):
+    """R12 when the scene opens on an angle shorter than 0.8 s past the line's start: the line starts on the next
+    picture; with no next picture, the short one holds its last frame."""
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=0.6", "-f", "lavfi", "-i", f"testsrc=s=320x180:r={FPS}:d=4.4",
+        "-filter_complex", "[0:v][1:v]concat=n=2:v=1,format=yuv420p", str(tmp_path / "shortfirst.mp4"))
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=0.7", "-pix_fmt", "yuv420p", str(tmp_path / "tiny.mp4"))
+    _ff("-f", "lavfi", "-i", "sine=f=300:d=3:sample_rate=48000", str(tmp_path / "line3.wav"))
+    for clip, starts_on_second in (("shortfirst", True), ("tiny", False)):
+        plan = {"fps": FPS, "size": [320, 180], "scenes": [
+            {"beat": "setup", "narration": "Three seconds of line.", "narration_audio": str(tmp_path / "line3.wav"),
+             "shots": [{"kind": "action", "clip": str(tmp_path / f"{clip}.mp4")}]},
+            {"beat": "turn", "shots": [{"kind": "action", "clip": str(media / "x.mp4")}]}]}
+        segs = edit.plan_segments(plan, tmp_path, media)
+        report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+        v = report["voice"][0]
+        first = [s for s in report["timeline"] if s["scene"] == 0]
+        assert first[0]["extra"]["src_dur"] < 0.8                            # the opening angle is short
+        cuts = [s["at"] for s in report["timeline"][1:]]
+        assert not [c for c in cuts if v["at"] + 1e-3 < c < v["at"] + 0.8 - 1e-3], (clip, v, cuts)
+        assert metrics(report)["cut_in_first08"] == 0
+        if starts_on_second:
+            assert abs(v["at"] - (first[1]["at"] + 0.1)) < 1e-3              # the line starts on the next picture
+        else:
+            assert first[0]["extra"].get("freeze", 0) > 0                     # the only picture holds its last frame
+        assert abs(v["played"] - v["file_dur"]) < 1e-3

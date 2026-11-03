@@ -558,7 +558,10 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                     lead = HEADLINE_S - (ends[first - 1] if first else 0.0)
                     run = run[first:]
             got = _extend(run, lead + 0.1 + nd + 0.2, fps) - lead
-            _first_at_least(run, lead + 0.95, fps)
+            while not _first_at_least(run, lead + 0.95, fps) and not lead and len(run) > 1:
+                # R12: the opening angle is too short for the line's first 0.8 s: the line starts on the next picture
+                run = run[1:]
+                got = _extend(run, 0.1 + nd + 0.2, fps)
             if got < 0.1 + nd + 0.2 - 1e-6:
                 log.warning("scene %d: narration %.2fs outlasts its pictures (%.2fs): the last one holds", si, nd, got)
                 _hold_last(run, lead + 0.1 + nd + 0.2, fps)
@@ -683,8 +686,9 @@ def _grow(seg: Seg, sec: float, fps: int) -> None:
 
 def _settle(segs: list[Seg], voices: list[dict], fps: int) -> None:
     """Lay out the timeline and place every voice (`anchor` segment + `offset`, or `fixed_at`), then guarantee, for
-    every narration line whatever placed it: it ends 0.2 s before the next line starts and before its scene ends
-    (R13: never cut off, never over another line, the next scene starts after it). A picture that is too short grows (a still holds
+    every narration line whatever placed it: the picture under its start runs at least 0.8 s past it (R12: no cut in
+    a line's first 0.8 s), and it ends 0.2 s before the next line starts and before its scene ends (R13: never cut
+    off, never over another line, the next scene starts after it). A picture that is too short grows (a still holds
     longer, a clip holds its last frame) and the layout is redone until nothing moves."""
     for _ in range(100):
         t = 0.0
@@ -702,10 +706,15 @@ def _settle(segs: list[Seg], voices: list[dict], fps: int) -> None:
             under = next((s for s in content if s.at - 1e-6 <= at < s.at + s.frames / fps), None)
             home = v["anchor"] if "anchor" in v else (under or content[-1])
             scene = [s for s in content if s.scene == home.scene]
+            if under is not None and under.scene == home.scene and under is not scene[-1] \
+                    and under.at + under.frames / fps < at + 0.8 - 1e-6:
+                _grow(under, at + 0.8 - (under.at + under.frames / fps), fps)
+                grew = True
+                break
             # the line must end before its scene does and before the next line that growing a picture can move (one
             # anchored to a later picture; a line at a fixed time is where the plan put it)
             index = {id(s): i for i, s in enumerate(segs)}
-            limit, grow, need = scene[-1].at + scene[-1].frames / fps, scene[-1], end + 0.2
+            limit, grow, need = scene[-1].at + scene[-1].frames / fps, scene[-1], max(end + 0.2, at + 0.8)
             for w in sorted((w for w in voices if w is not v and "anchor" in w and w["at"] > at + 1e-6),
                             key=lambda w: w["at"]):
                 before = [s for s in scene if s.at < w["at"] - 1e-6 and index[id(s)] < index[id(w["anchor"])]]

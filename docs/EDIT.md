@@ -106,3 +106,6 @@ model's `openapi.json` documents. If it ever answers with a queued `request_id`,
 logs one warning and returns None, so the cut still renders. Results are cached by output path, so
 re-running does not spend credits again. The default voice is `21m00Tcm4TlvDq8ikWAM`, from the Router
 openapi example; `SHOT_DIRECTOR_VOICE` overrides it.
+
+
+**Gate exception (explicit):** a scene whose clip windows all fail the sharpness gate opens on its stills and the smeared clip is dropped. Only a scene with no stills at all keeps its sharpest window, marked `gate_exception: true` in the cuts JSON and logged as a warning, because a scene must show something.

@@ -1,0 +1,64 @@
+{
+  "1": {
+    "class_type": "Flux3ImageNode",
+    "inputs": {
+      "prompt": "A lone courier in a yellow rain jacket stands at the mouth of a neon-lit Tokyo alley at night, wet asphalt reflecting pink and teal signs, steam rising from a vent, cinematic wide shot, first frame of a film scene. Shot on 35mm film, fine film grain, warm halation, anamorphic lens flare, cinematic colour grade.",
+      "aspect_ratio": "16:9",
+      "resolution": "1K",
+      "grounding": false,
+      "safety_tolerance": 4,
+      "seed": 42
+    },
+    "_meta": {
+      "title": "Stage 2 - Start frame (FLUX 3 Image)"
+    }
+  },
+  "2": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "shot-director/frame",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save start frame"
+    }
+  },
+  "3": {
+    "class_type": "Flux3ImageToVideoNode",
+    "inputs": {
+      "prompt": "A lone courier in a yellow rain jacket stands at the mouth of a neon-lit Tokyo alley at night, rain falling, steam drifting. slow smooth dolly-in toward the subject, the camera pushes forward steadily. shot on 35mm film, fine film grain, warm halation, anamorphic lens flare, cinematic colour grade.",
+      "keyframes.image_0": [
+        "1",
+        0
+      ],
+      "placement": "spread across the clip",
+      "aspect_ratio": "16:9",
+      "duration": "5",
+      "resolution": "720p",
+      "generate_audio": true,
+      "safety_tolerance": 2,
+      "seed": 42
+    },
+    "_meta": {
+      "title": "Stage 3 - Clip (Flux 3 Image to Video)"
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "filename_prefix": "video/shot_director_flux3_i2v",
+      "format": "auto",
+      "format.codec": "auto",
+      "video": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "2": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "filename_prefix": "video/shot_director_ltx_preview",
+      "format": "auto",
+      "format.codec": "auto",
+      "video": [
+        "3",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "3": {
+    "class_type": "LtxApi25TextToVideo",
+    "inputs": {
+      "model": "LTX-2.5 (Fast)",
+      "model.duration": "4",
+      "model.fps": "25",
+      "model.generate_audio": true,
+      "model.resolution": "1280x720",
+      "prompt": "A lone courier in a yellow rain jacket stands at the mouth of a neon-lit Tokyo alley at night, rain falling, steam drifting. slow smooth dolly-in toward the subject, the camera pushes forward steadily. shot on 35mm film, fine film grain, warm halation, anamorphic lens flare, cinematic colour grade.",
+      "seed": 42
+    },
+    "_meta": {
+      "title": "LTX 2.5 Text To Video (preview shot)"
+    }
+  }
+}

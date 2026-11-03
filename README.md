@@ -6,6 +6,8 @@ Built for **Open Source Higgsfield: ComfyUI Build Night** (NYC, 2026-11-02). Mod
 
 **Why it is new:** a camera-preset compiler turns a body + move into a model-ready prompt, and shot-to-shot continuation (FLUX 3 Video `v2v`) feeds each shot the previous one, so a 3-shot sequence holds continuity; each shot can pick the engine that suits it.
 
+**ComfyUI workflows:** `workflows/` holds the same shot as ComfyUI API-node graphs (FLUX 3 image → FLUX 3 Video, and an LTX 2.5 preview); see `workflows/README.md`.
+
 ## Engines (pick per shot)
 
 | Engine | Best for | Time per shot (live) |

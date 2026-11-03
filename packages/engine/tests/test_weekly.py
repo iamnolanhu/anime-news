@@ -142,8 +142,11 @@ def test_weekly_storyboard_shape():
     assert sb["series"] == "THE WEEKLY BRIEFING" and sb["countdown"] == "NEXT BRIEFING IN"
     assert [s["headline"] for s in sb["segments"]] == [s["headline"] for s in SEGS] and sb["week"] == "2026-W44"
     assert S.normalize(sb) == sb                            # an edited weekly storyboard survives the validator
+    st = S.stats(sb)                                        # PsyopAnime pace: ~5 talk / 9 still or insert / 6 action
+    assert abs(st["talk"] - 5) <= 1 and abs(st["still"] + st["insert"] - 9) <= 1 and abs(st["action"] - 6) <= 1
+    assert all("Hard cut to:" in s["prompt"] for sc in sb["scenes"] for s in sc["shots"] if s["kind"] == "action")
     longer = S.build("", segments=SEGS, minutes=3, mock=True)
-    assert 36 <= S.stats(longer)["shots"] <= 44
+    assert 54 <= S.stats(longer)["shots"] <= 66
 
 
 # -- the manifest and plan-only ---------------------------------------------------------------------

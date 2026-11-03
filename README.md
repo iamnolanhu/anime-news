@@ -81,7 +81,7 @@ In hosted mode `PUT /api/config` answers 403, over-limit requests get 429 with `
 The pipeline, one episode:
 
 1. **Headline.** A headline, plus the article text or link if you have one, and a length from 30 seconds to 5 minutes.
-2. **Storyboard.** One writer call on Comfy Router returns the cast and the scenes (cold open, setup, escalation, turn, climax, sign-off), about 4 scenes a minute with 3 to 6 shots each. No cap on shots or scenes; edit anything before rendering.
+2. **Storyboard.** One writer call on Comfy Router returns the cast and the scenes (cold open, setup, escalation, turn, climax, sign-off), about 20 shots a minute (PsyopAnime pace: 5 talk, 9 stills and inserts, 6 action) in 4-5 scenes. No cap on shots or scenes; edit anything before rendering.
 3. **Stills.** Every shot gets its own FLUX start frame from its own prompt and the cast sheet.
 4. **Shots.** Each frame becomes a Seedance clip: talking takes carry their own voice, action takes carry the motion. Shots render in parallel.
 5. **Sound.** Narration through ElevenLabs on Comfy Router, a music bed with a riser and drop, whooshes and impacts on scene changes.

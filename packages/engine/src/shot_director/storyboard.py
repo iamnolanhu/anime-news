@@ -3,7 +3,8 @@
 One Router chat call writes it (writer v2's show bible and voice, extended to many scenes of mixed shots);
 mock mode, or no key, returns a deterministic template storyboard of the same shape. `normalize()` is the
 one validator: it checks the writer's reply and every storyboard the web app sends back after editing.
-No cap on scenes or shots: the writer targets about 4 scenes a minute and 3-6 shots a scene.
+No cap on scenes or shots: the writer targets PsyopAnime pace, about 20 shots a minute (5 talk, 9 still or insert,
+6 action) in 4-5 scenes a minute; `shot_plan()` is that plan, and the mock template follows it shot for shot.
 Schema: docs/STORYBOARD.md.
 """
 
@@ -23,7 +24,11 @@ MIDDLE_ACTS = ("setup", "escalation", "turn", "climax")
 KINDS = ("talk", "action", "still", "insert")
 VIDEO_KINDS = ("talk", "action")
 MOVES = tuple(presets.CAMERA_MOVES)
-SCENES_PER_MINUTE = 4
+SCENES_PER_MINUTE = 4.5   # 4-5 scenes a minute: 0.5 min = 2, 1 min = 5, 2 min = 9, 3 min = 14
+# PsyopAnime pace (median shot 1.4 s, 27-50 cuts a minute): 18-22 shots per minute of target length. On screen a talk
+# shot holds 2.5-3 s, a still or insert 1.2-1.5 s, an action shot 1-2 s per angle (two angles: "Hard cut to:").
+SHOTS_PER_MINUTE = 20
+MIX_PER_MINUTE = {"talk": 5, "cutaway": 9, "action": 6}   # cutaway = a still or an insert
 MAX_MINUTES = 5.0
 LINE_MAX = 60          # characters of one spoken line (a two-line subtitle)
 CAPTION_MAX = 60
@@ -89,8 +94,73 @@ class StoryboardError(ValueError):
 
 # -- input ----------------------------------------------------------------------------------------
 
+def _half_up(x: float) -> int:
+    return int(math.floor(x + 0.5))
+
+
 def scene_count(minutes: float) -> int:
-    return max(2, round(minutes * SCENES_PER_MINUTE))
+    return max(2, _half_up(minutes * SCENES_PER_MINUTE))
+
+
+def shot_budget(minutes: float, floor: int = 1) -> dict:
+    """Shots for `minutes` of episode at PsyopAnime pace: {"shots", "talk", "action", "cutaway"} (at least `floor`
+    shots and one talk shot, the sign-off)."""
+    total = max(floor, 1, _half_up(minutes * SHOTS_PER_MINUTE))
+    talk = min(total, max(1, _half_up(minutes * MIX_PER_MINUTE["talk"])))
+    action = min(total - talk, max(1, _half_up(minutes * MIX_PER_MINUTE["action"])))
+    return {"shots": total, "talk": talk, "action": action, "cutaway": total - talk - action}
+
+
+def _kinds(scenes: list[dict], actions: int) -> list[list[str]]:
+    """Shot kinds per scene. Each scene is {"shots", "talks", "talk_last" (talk ends it, else opens it),
+    "cutaways_only"}. `actions` of the free picture slots are action shots, spread evenly over the episode (the first
+    free slot is one); the rest are cutaways alternating still and insert. Talks are spread through their scene."""
+    free = sum(sc["shots"] - sc["talks"] for sc in scenes if not sc.get("cutaways_only"))
+    actions = min(actions, free)
+    k = cut = 0
+    out = []
+    for sc in scenes:
+        n, t = sc["shots"], min(sc["talks"], sc["shots"])
+        pics = []
+        for _ in range(n - t):
+            if not sc.get("cutaways_only") and (k * actions) // free > ((k - 1) * actions) // free:
+                pics.append("action")
+            else:
+                pics.append(("still", "insert")[cut % 2])
+                cut += 1
+            k += 0 if sc.get("cutaways_only") else 1
+        at = {(i * n) // t for i in range(t)} if t else set()
+        if sc.get("talk_last"):
+            at = {n - 1 - p for p in at}
+        it = iter(pics)
+        out.append(["talk" if j in at else next(it) for j in range(n)])
+    return out
+
+
+def _spread_talks(sizes: list[int], talks: list[int], extra: int, where: list[int]) -> None:
+    """Hand `extra` talk shots round-robin to the scenes `where`, at most half of a scene's shots."""
+    while extra > 0 and where:
+        room = [j for j in where if talks[j] < max(1, sizes[j] // 2)]
+        for j in room[:extra]:
+            talks[j] += 1
+        extra -= len(room[:extra])
+        if not room:
+            break
+
+
+def shot_plan(minutes: float) -> list[tuple[str, list[str]]]:
+    """(act, shot kinds) per scene of a headline episode: shot_budget's shots spread evenly over act_plan's scenes;
+    no talk in the cold open, one talk opening each middle scene (extras round-robin), the sign-off talk last."""
+    acts = act_plan(scene_count(minutes))
+    n = len(acts)
+    b = shot_budget(minutes, n)
+    sizes = [b["shots"] // n + (1 if i < b["shots"] % n else 0) for i in range(n)]
+    talks = [0] * n
+    talks[-1] = 1
+    _spread_talks(sizes, talks, b["talk"] - 1, [i for i, a in enumerate(acts) if a not in ("cold_open", "sign_off")])
+    kinds = _kinds([{"shots": sizes[i], "talks": talks[i], "talk_last": acts[i] == "sign_off"} for i in range(n)],
+                   b["action"])
+    return list(zip(acts, kinds))
 
 
 def act_plan(n: int) -> list[str]:
@@ -332,56 +402,157 @@ def _storyboard_id(headline: str, minutes: float) -> str:
 
 # -- the template (mock mode) ---------------------------------------------------------------------
 
+# Per act: (setting, caption, narration, pools). A scene of the template takes its shot plan from shot_plan() and fills
+# each slot from its act's pool of that kind, in order (an act that comes back continues where it left off). Talk:
+# (speaker, line <= 60 chars, prompt, move); the others: (prompt, move). Every action prompt is one clear motion and a
+# "Hard cut to:" second angle, so its clip gives the cut two compositions.
 _TEMPLATE = {
-    "cold_open": ("a dark invented capital at night, CRT glow, teal shadows, burnt-orange light", "", "", [
-        ("action", [], "", "Extreme close-up of a red alarm light spinning in a dark war room, sparks of light", "crash_zoom"),
-        ("insert", [], "", "Close-up of a teletype printing the words \"{h}\" on yellowed paper", "static"),
-        ("action", [], "", "Wide shot of searchlights sweeping across giant tower screens that all read \"{h}\"", "crane_up"),
-        ("still", [], "", "Extreme close-up of {anchor}'s eyes reflecting a glowing monitor", "dolly_in"),
-    ]),
+    "cold_open": ("a dark invented capital at night, CRT glow, teal shadows, burnt-orange light", "", "", {
+        "talk": [],
+        "action": [
+            ("Extreme close-up of a red alarm light spinning in a dark war room. Hard cut to: wide shot of the room flooding with red light", "crash_zoom"),
+            ("Wide shot of searchlights sweeping across giant tower screens. Hard cut to: close-up of one screen flaring white", "crane_up"),
+            ("Medium shot of a teletype arm hammering out paper. Hard cut to: overhead shot of the paper spilling onto the floor", "handheld"),
+        ],
+        "still": [
+            ("Extreme close-up of {anchor}'s eyes reflecting a glowing monitor", "dolly_in"),
+            ("Wide shot of the invented capital skyline at night, every window dark but one", "static"),
+        ],
+        "insert": [
+            ("Close-up of a teletype printing the words \"{h}\" on yellowed paper", "static"),
+            ("Close-up of a red telephone on a desk, its cord swinging", "static"),
+        ],
+    }),
     "setup": ("the anime newsroom, a long desk before a wall of world-map monitors", "{short}",
-              "Sources confirm it. {h}. Officials have convened. Nobody was ready.", [
-        ("talk", ["anchor"], "Good evening. This week: {short_line}", "Medium shot of {anchor} at the news desk, facing camera", "dolly_in"),
-        ("action", [], "", "Overhead shot of a war-room table where an oversized absurd prop literalizes the headline, staffers recoil", "handheld"),
-        ("still", [], "", "Low angle of invented officials staring in silence at a glowing map", "static"),
-        ("insert", [], "", "Close-up of a classified folder stamped URGENT with \"{h}\" typed on the cover", "static"),
-        ("action", [], "", "Medium shot of staffers sprinting down a corridor with armfuls of paperwork, speed lines", "whip_pan"),
-    ]),
+              "Sources confirm it. {h}. Officials have convened. Nobody was ready.", {
+        "talk": [
+            ("anchor", "Good evening. This week: {short_line}", "Medium shot of {anchor} at the news desk, facing camera", "dolly_in"),
+            ("anchor", "We checked. Then we checked again. It's real.", "Close-up of {anchor} lowering a sheet of paper, facing camera", "static"),
+            ("anchor", "Officials say stay calm. Officials are not calm.", "Medium close-up of {anchor} at the desk, one eyebrow raised, facing camera", "dolly_in"),
+        ],
+        "action": [
+            ("Overhead shot of a war-room table where an oversized absurd prop slams down. Hard cut to: close-up of staffers recoiling", "handheld"),
+            ("Medium shot of staffers sprinting down a corridor with armfuls of paperwork, speed lines. Hard cut to: low angle of papers raining down", "whip_pan"),
+            ("Wide shot of a press room where every chair spins round at once. Hard cut to: close-up of a dropped pen bouncing", "orbit"),
+        ],
+        "still": [
+            ("Low angle of invented officials staring in silence at a glowing map", "static"),
+            ("Extreme close-up of a staffer's trembling coffee cup, ripples in the coffee", "dolly_in"),
+            ("Wide shot of the newsroom frozen mid-motion, every head turned to the monitors", "dolly_out"),
+        ],
+        "insert": [
+            ("Close-up of a classified folder stamped URGENT with \"{h}\" typed on the cover", "static"),
+            ("Close-up of a monitor in the newsroom showing \"{short}\" in red letters", "static"),
+            ("Close-up of a stamp pressing BREAKING onto a memo", "static"),
+        ],
+    }),
     "escalation": ("a rooftop over the invented capital at dusk, painted sky, wind", "It is getting bigger.",
-                   "The situation escalated. Then it escalated again. The clock is still running.", [
-        ("talk", ["operative"], "{operative_spoken} here. It's worse than we thought.", "Close-up of {operative} whispering into her wrist on a windy rooftop", "handheld"),
-        ("action", [], "", "Wide shot of the absurd prop growing to the size of a building, citizens point upward in shock", "crane_up"),
-        ("still", [], "", "Extreme close-up of a citizen's wide shocked eyes, hatching, sweat drop", "crash_zoom"),
-        ("insert", [], "", "Close-up of a ticker board flipping wildly, every line reads \"{short}\"", "static"),
-        ("action", [], "", "Medium shot of pigeons scattering off a giant news screen, speed lines, debris", "whip_pan"),
-    ]),
+                   "The situation escalated. Then it escalated again. The clock is still running.", {
+        "talk": [
+            ("operative", "{operative_spoken} here. It's worse than we thought.", "Close-up of {operative} whispering into her wrist on a windy rooftop", "handheld"),
+            ("operative", "It doubled. Then it doubled again.", "Medium shot of {operative} crouched behind a rooftop vent, facing camera", "static"),
+            ("operative", "I need backup. And a much bigger net.", "Close-up of {operative} gripping her earpiece, wind in her hair, facing camera", "handheld"),
+        ],
+        "action": [
+            ("Wide shot of the absurd prop growing to the size of a building. Hard cut to: close-up of citizens pointing upward", "crane_up"),
+            ("Medium shot of pigeons scattering off a giant news screen, speed lines. Hard cut to: wide shot of feathers drifting over the street", "whip_pan"),
+            ("Low angle of a billboard toppling in the wind, debris. Hard cut to: close-up of a citizen ducking", "crash_zoom"),
+        ],
+        "still": [
+            ("Extreme close-up of a citizen's wide shocked eyes, hatching, sweat drop", "crash_zoom"),
+            ("Wide shot of a crowd frozen in the street, all looking up", "dolly_out"),
+            ("Low angle of the prop's shadow falling across the whole city", "static"),
+        ],
+        "insert": [
+            ("Close-up of a ticker board flipping wildly, every line reads \"{short}\"", "static"),
+            ("Close-up of a weather vane spinning out of control", "static"),
+            ("Close-up of a rooftop antenna sparking", "static"),
+        ],
+    }),
     "turn": ("a cramped lab wallpapered with charts and red string", "It's all connected.",
-             "The analysts have a theory. The theory has charts.", [
-        ("talk", ["analyst"], "It's all connected. I have charts. So many charts.", "Close-up of {analyst} before a red-string evidence board", "dolly_in"),
-        ("action", [], "", "Medium shot of red string snapping taut across a wall of pinned photos of invented landmarks", "orbit"),
-        ("still", [], "", "Overhead shot of a desk buried in coffee mugs and annotated maps", "static"),
-        ("insert", [], "", "Close-up of a chart whose arrow crashes straight down off the page", "crash_zoom"),
-        ("action", [], "", "Wide shot of the lab lights flickering as a monitor wall glitches on \"{short}\"", "handheld"),
-    ]),
+             "The analysts have a theory. The theory has charts.", {
+        "talk": [
+            ("analyst", "It's all connected. I have charts. So many charts.", "Close-up of {analyst} before a red-string evidence board", "dolly_in"),
+            ("analyst", "Follow the string. The string always knows.", "Medium shot of {analyst} tapping the evidence board, facing camera", "static"),
+            ("analyst", "I ran the numbers. The numbers ran away.", "Close-up of {analyst} pushing up his glasses, facing camera", "dolly_in"),
+        ],
+        "action": [
+            ("Medium shot of red string snapping taut across a wall of pinned photos. Hard cut to: close-up of a pin popping loose", "orbit"),
+            ("Wide shot of the lab lights flickering as a monitor wall glitches. Hard cut to: close-up of a monitor showing static", "handheld"),
+            ("Medium shot of a stack of charts toppling off a desk. Hard cut to: overhead shot of charts fanned across the floor", "crash_zoom"),
+        ],
+        "still": [
+            ("Overhead shot of a desk buried in coffee mugs and annotated maps", "static"),
+            ("Extreme close-up of {analyst}'s glasses reflecting a web of red string", "dolly_in"),
+            ("Wide shot of the lab at night, one desk lamp, walls of charts", "dolly_out"),
+        ],
+        "insert": [
+            ("Close-up of a chart whose arrow crashes straight down off the page", "crash_zoom"),
+            ("Close-up of a pinned photo of an invented landmark circled in red", "static"),
+            ("Close-up of a notebook page covered in arrows and question marks", "static"),
+        ],
+    }),
     "climax": ("a dusty western main street at high noon, painted sky", "The standoff begins.",
-               "Two bureaucracies. One form. High noon.", [
-        ("action", [], "", "Wide shot of two invented rival bureaucrats in a standoff, each holding a giant rubber stamp", "orbit"),
-        ("insert", [], "", "Close-up of a wanted poster that reads \"{short}\" flapping in the wind", "static"),
-        ("action", [], "", "Medium shot as both stamps slam down on one form at once, white flash, speed lines", "crash_zoom"),
-        ("talk", ["operative"], "Nobody blinks. Nobody files. Nobody wins.", "Close-up of {operative} watching from behind a water trough", "dolly_in"),
-        ("still", [], "", "Wide shot of the whole town buried in stamped paperwork", "dolly_out"),
-    ]),
+               "Two bureaucracies. One form. High noon.", {
+        "talk": [
+            ("operative", "Nobody blinks. Nobody files. Nobody wins.", "Close-up of {operative} watching from behind a water trough", "dolly_in"),
+            ("anchor", "This is the moment the forms were made for.", "Medium shot of {anchor} at the desk, perfectly still, facing camera", "static"),
+            ("operative", "Somebody has to sign. Nobody will.", "Close-up of {operative} squinting into the sun, facing camera", "handheld"),
+        ],
+        "action": [
+            ("Wide shot of two invented rival bureaucrats in a standoff, each raising a giant rubber stamp. Hard cut to: close-up of their eyes narrowing", "orbit"),
+            ("Medium shot as both stamps slam down on one form at once, white flash, speed lines. Hard cut to: overhead shot of the form", "crash_zoom"),
+            ("Wide shot of a tumbleweed of paperwork rolling down the street. Hard cut to: low angle of saloon doors swinging", "whip_pan"),
+        ],
+        "still": [
+            ("Wide shot of the whole town buried in stamped paperwork", "dolly_out"),
+            ("Extreme close-up of a bureaucrat's hand hovering over a stamp", "dolly_in"),
+            ("Low angle of the two rivals silhouetted against the sun", "static"),
+        ],
+        "insert": [
+            ("Close-up of a wanted poster that reads \"{short}\" flapping in the wind", "static"),
+            ("Close-up of an inkpad, glistening, untouched", "static"),
+            ("Close-up of a form with two empty signature lines", "static"),
+        ],
+    }),
     "sign_off": ("the anime newsroom after hours, one monitor still glowing", "That was the news.",
-                 "It will happen again. We will be here.", [
-        ("action", [], "", "Medium shot of a giant red alarm button slammed down, a tiny paper flag pops out", "crash_zoom"),
-        ("still", [], "", "Wide shot of the dark studio, one monitor glowing with \"{short}\"", "crane_up"),
-        ("talk", ["anchor"], "It will happen again. " + SIGN_OFF, "Close-up of {anchor} at the desk, hands folded, perfectly deadpan", "dolly_out"),
-    ]),
+                 "It will happen again. We will be here.", {
+        "talk": [
+            ("anchor", "It will happen again. " + SIGN_OFF, "Close-up of {anchor} at the desk, hands folded, perfectly deadpan", "dolly_out"),
+        ],
+        "action": [
+            ("Medium shot of a giant red alarm button slammed down. Hard cut to: close-up of a tiny paper flag popping out", "crash_zoom"),
+            ("Wide shot of the newsroom lights switching off row by row. Hard cut to: close-up of the last lamp", "dolly_out"),
+        ],
+        "still": [
+            ("Wide shot of the dark studio, one monitor glowing with \"{short}\"", "crane_up"),
+            ("Extreme close-up of {anchor}'s folded hands on the desk", "static"),
+        ],
+        "insert": [
+            ("Close-up of the night's script dropped in a wastebasket", "static"),
+            ("Close-up of a desk nameplate under the glow of one monitor", "static"),
+        ],
+    }),
 }
 
 
+def _fill_shots(pools: dict, kinds: list[str], used: dict, fill: dict | None = None) -> list[tuple]:
+    """Shots of one scene: each slot takes the next item of its kind's pool (wrapping); `used` counts per kind.
+    `fill` formats the pool's {placeholders}; without it the pool's text is used as is."""
+    fmt = (lambda t: t.format(**fill)) if fill is not None else (lambda t: t)
+    out = []
+    for kind in kinds:
+        pool = pools[kind]
+        item = pool[used.get(kind, 0) % len(pool)]
+        used[kind] = used.get(kind, 0) + 1
+        cast, line, (prompt, move) = ([item[0]], item[1], item[2:]) if kind == "talk" else ([], "", item)
+        out.append((kind, cast, fmt(line), fmt(prompt), move))
+    return out
+
+
 def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
-    """Deterministic storyboard of the full shape (mock mode and the writer's fallback in tests)."""
+    """Deterministic storyboard of the full shape (mock mode, the writer's shot plan, and tests): shot_plan()'s
+    kinds, filled from each act's pools."""
     h = " ".join(headline.split()).replace('"', "'")
     words = h.split()
     short = " ".join(words[:6]) + ("..." if len(words) > 6 else "")
@@ -389,13 +560,13 @@ def template(headline: str, minutes: float = 1.0, text: str = "") -> dict:
     names = {c["id"]: c["name"] for c in members}
     fill = {"h": h, "short": short, "short_line": _clip_chars(short, LINE_MAX - 25), **names,
             "operative_spoken": names["operative"].title()}
-    scenes = []
-    for i, act in enumerate(act_plan(scene_count(minutes)), 1):
-        setting, caption, narration, shots = _TEMPLATE[act]
+    scenes, used = [], {}
+    for i, (act, kinds) in enumerate(shot_plan(minutes), 1):
+        setting, caption, narration, pools = _TEMPLATE[act]
+        shots = _fill_shots(pools, kinds, used.setdefault(act, {}), fill)
         scenes.append({"id": f"s{i}", "act": act, "setting": setting, "caption": caption.format(**fill),
                        "narration": narration.format(**fill),
-                       "shots": [{"id": f"s{i}_{j}", "kind": k, "cast": cast, "line": line.format(**fill),
-                                  "prompt": prompt.format(**fill), "move": move}
+                       "shots": [{"id": f"s{i}_{j}", "kind": k, "cast": cast, "line": line, "prompt": prompt, "move": move}
                                  for j, (k, cast, line, prompt, move) in enumerate(shots, 1)]})
     return normalize({"headline": h, "minutes": minutes, "source_text_excerpt": text[:EXCERPT_MAX],
                       "logline": f"{SERIES}: \"{h}\", briefed like a war-room emergency and taken literally.",
@@ -417,22 +588,23 @@ RECURRING CAST (original characters; use their NAMES in lines and prompts; the c
 When a member listed with Poses appears in a talk, action or still shot, put her pose for that shot kind into the prompt right after the shot size (it keeps poses natural and varied).
 You may add at most two new invented characters (original archetypes, never a real person) to "cast".
 
+PACE: a fast anime short, hard cuts, every shot shown once, a shot on screen about 1.4 s. Many short shots, never a few long ones.
 SHOT KINDS (mix them in every scene; no two consecutive shots show the same composition)
-- talk: one cast member speaks one line on camera, mouth visible, facing camera. "cast": [speaker id], "line": the spoken words.
-- action: one strong subject, one clear motion verb; impact frames, speed lines, debris, wind, light. Becomes a short animated clip.
-- still: a single striking composition (face, eyes, reaction, wide establishing) used as a quick cut-in.
-- insert: a close-up of a prop, screen, ticker or document; the headline text may appear on it.
-Budget: talk and action shots are animated and expensive; still and insert are cheap. About half the shots of a scene are still or insert.
+- talk: one cast member speaks one line on camera, mouth visible, facing camera. "cast": [speaker id], "line": the spoken words. Held 2.5-3 s on screen, so the line is short.
+- action: one strong subject doing ONE clear motion (one verb), then "Hard cut to:" and a second, different composition of the same moment (a reaction close-up, the prop, a wide), so the clip gives two shots of 1-2 s. Impact frames, speed lines, debris, wind, light. Example: "Wide shot of a giant stamp slamming onto a desk, speed lines. Hard cut to: close-up of the clerk flinching".
+- still: a single striking composition (face, eyes, reaction, wide establishing) used as a quick 1.2-1.5 s cut-in.
+- insert: a close-up of a prop, screen, ticker or document, a quick 1.2-1.5 s cutaway; the headline text may appear on it.
 
 HARD RULES
 - Exactly {scenes} scenes, acts in this order: {acts}.
-- 3 to 6 shots per scene; about {shots} shots in total.
+- {shots} shots in total ({per_minute} a minute): about {talk} talk, {cutaway} still or insert, {action} action. Follow this shot plan (you may swap kinds within a scene, never drop shots):
+{plan}
 - cold_open: no talk shots, empty caption and narration.
 - The last shot of the last scene is a talk shot by the anchor whose line ends exactly with "{sign_off}"
 - Spoken lines: at most 60 characters, punchy, quotable, funny on their own as a subtitle, no stage directions.
-- Prompts: at most 40 words, drawn-anime terms only (inked, cel, painted background), start with the shot size (extreme close-up, close-up, medium, wide, overhead, low angle). Talk prompts frame the speaker clearly. Never photoreal, cinematic, 4K or lens terms.
+- Prompts: at most 40 words (action: at most 55 with its "Hard cut to:" angle), drawn-anime terms only (inked, cel, painted background), start with the shot size (extreme close-up, close-up, medium, wide, overhead, low angle). Talk prompts frame the speaker clearly. Never photoreal, cinematic, 4K or lens terms.
 - caption: the scene's one-clause subtitle (<= 40 chars). narration: 1-2 deadpan briefing sentences (<= 30 words) or "" when the scene is all dialogue.
-- move: one of {moves}. seconds: talk 4-8 (by line length), action 5, still/insert 5.
+- move: one of {moves}. seconds (the generated clip's length, not its time on screen; the cut trims it): talk 4-8 (by line length), action 5, still/insert 5.
 - Never depict, describe or name a real person; refer to people in the headline only by role ("the official"). Invented countries and institutions only. No real logos or flags. Safe for work: no weapons pointed at people, no gore. Never name an anime studio, film or artist.
 - """ + writer.NO_CLOCKS + """
 {style}
@@ -463,13 +635,11 @@ def _cast_block(cast: list[dict]) -> str:
 
 def write(headline: str, text: str = "", minutes: float = 1.0, style: str = "") -> dict:
     """One Router chat call (one retry with the validation error on a bad reply). Raises on failure."""
-    n = scene_count(minutes)
-    acts = act_plan(n)
+    shape = template(headline, minutes)
+    n = len(shape["scenes"])
     base_cast = default_cast()
     base_ids = {c["id"] for c in base_cast}
-    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(base_cast), scenes=n, acts=", ".join(acts),
-                                  shots=round(n * 4.5), sign_off=SIGN_OFF, moves=", ".join(MOVES),
-                                  style=f"- Visual style direction from the user: {style}\n" if style else "")
+    system = _system_prompt(shape, base_cast, f"- Visual style direction from the user: {style}\n" if style else "")
     user = USER_PROMPT.format(headline=headline.replace('"', "'"), source=text[:SOURCE_MAX] or "(none)",
                               minutes=minutes)
     max_tokens = min(32000, 2500 + n * 900)
@@ -489,11 +659,41 @@ def write(headline: str, text: str = "", minutes: float = 1.0, style: str = "") 
                             "style": style})
             if len(sb["scenes"]) < max(1, math.ceil(n * 0.75)):
                 raise StoryboardError(f"expected {n} scenes, got {len(sb['scenes'])}")
+            _check_density(sb, shape)
             return _finish(sb)
         except (ValueError, StoryboardError) as e:
             last_error = str(e)[:300]
             print(f"[anime-news] writer reply rejected ({attempt + 1}/2): {last_error}", file=sys.stderr, flush=True)
     raise StoryboardError(f"writer failed: {last_error}")
+
+
+def _plan_text(scenes: list[dict]) -> str:
+    """The shot plan as the writer reads it: one line per scene with its act, topic/caption and shot kinds."""
+    lines = []
+    for i, sc in enumerate(scenes, 1):
+        extra = f', topic "{sc["topic"]}", caption "{sc["caption"]}"' if sc.get("topic") else ""
+        lines.append(f"  {i}. {sc['act']}{extra}: {len(sc['shots'])} shots ({', '.join(s['kind'] for s in sc['shots'])})")
+    return "\n".join(lines)
+
+
+def _system_prompt(shape: dict, cast: list[dict], style: str) -> str:
+    """SYSTEM_PROMPT for a storyboard of `shape`'s plan (a template storyboard: headline or weekly)."""
+    st = stats(shape)
+    return SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(cast), scenes=st["scenes"],
+                                acts=", ".join(sc["act"] for sc in shape["scenes"]), shots=st["shots"],
+                                per_minute=f"{SHOTS_PER_MINUTE - 2}-{SHOTS_PER_MINUTE + 2}", talk=st["talk"],
+                                cutaway=st["still"] + st["insert"], action=st["action"],
+                                plan=_plan_text(shape["scenes"]), sign_off=SIGN_OFF, moves=", ".join(MOVES),
+                                style=style)
+
+
+DENSITY_FLOOR = 0.8   # a writer reply with fewer than 80 % of the planned shots is sent back (edits have no floor)
+
+
+def _check_density(sb: dict, shape: dict) -> None:
+    want, got = stats(shape)["shots"], stats(sb)["shots"]
+    if got < math.floor(want * DENSITY_FLOOR):
+        raise StoryboardError(f"expected about {want} shots (the shot plan), got {got}: write every planned shot")
 
 
 def _finish(sb: dict) -> dict:
@@ -561,11 +761,21 @@ _DEFAULT_LOOK = ("the anime newsroom, a wall of world-map monitors", "operative"
 
 
 def weekly_plan(n_segments: int, minutes: float) -> dict:
-    """Shot counts of a weekly episode: about 20 shots a minute-long episode, 40 at three minutes."""
-    total = max(2 * n_segments, min(6 * n_segments, round(12 * minutes * n_segments / 5)))
-    per = [total // n_segments + (1 if i < total % n_segments else 0) for i in range(n_segments)]
+    """Shot kinds per scene of a weekly episode at PsyopAnime pace (shot_budget: about 20 shots a minute):
+    {"cold_open", "segments": [one list per segment], "markets", "sign_off"}. Each segment opens on a talk shot
+    (extra talks round-robin), the markets insert is cutaways only, the sign-off ends on the anchor."""
     long = minutes >= 2
-    return {"cold_open": 4 if long else 3, "segments": per, "markets": 3 if long else 2, "sign_off": 3 if long else 2}
+    cold, markets, sign = (4, 3, 3) if long else (3, 2, 2)
+    b = shot_budget(minutes, cold + markets + sign + 2 * n_segments)
+    seg_total = b["shots"] - cold - markets - sign
+    sizes = [seg_total // n_segments + (1 if i < seg_total % n_segments else 0) for i in range(n_segments)]
+    talks = [1] * n_segments
+    _spread_talks(sizes, talks, b["talk"] - n_segments - 1, list(range(n_segments)))
+    kinds = _kinds([{"shots": cold, "talks": 0}]
+                   + [{"shots": sizes[i], "talks": talks[i]} for i in range(n_segments)]
+                   + [{"shots": markets, "talks": 0, "cutaways_only": True},
+                      {"shots": sign, "talks": 1, "talk_last": True}], b["action"])
+    return {"cold_open": kinds[0], "segments": kinds[1:-2], "markets": kinds[-2], "sign_off": kinds[-1]}
 
 
 def _short(text: str, words: int = 6) -> str:
@@ -573,63 +783,85 @@ def _short(text: str, words: int = 6) -> str:
     return " ".join(w[:words]) + ("..." if len(w) > words else "")
 
 
-def _segment_shots(i: int, seg: dict, n: int) -> list[tuple]:
+def _segment_pools(seg: dict) -> tuple[str, dict]:
+    """(setting, pools) of one topic segment, in _TEMPLATE's pool shape (text final, no placeholders)."""
     setting, field, screen, prop = _TOPIC_LOOK.get(seg["topic"], _DEFAULT_LOOK)
     h = seg["headline"].replace('"', "'")
     label = TOPIC_LABELS.get(seg["topic"], seg["topic"])
-    anchor_line = _clip_chars(f"In {label}: {_short(h)}", LINE_MAX)
-    field_line = {"operative": "Vex here. Nobody saw this coming. Nobody.",
-                  "analyst": "It's all connected. I have charts. So many charts."}[field]
-    pool = [
-        ("talk", ["anchor"], anchor_line, "Medium shot of KUROGANE at the news desk, facing camera, a monitor behind him", "dolly_in"),
-        ("action", [], "", f"Wide shot of {prop} literalizing the story, invented officials recoil, speed lines", "crane_up"),
-        ("insert", [], "", f"Close-up of {screen} that reads \"{h}\"", "static"),
-        ("talk", [field], field_line, f"Close-up of {'VEX' if field == 'operative' else 'DR. HAKASE'} reporting, facing camera", "handheld"),
-        ("still", [], "", "Extreme close-up of an invented citizen's wide shocked eyes, hatching, sweat drop", "crash_zoom"),
-        ("action", [], "", f"Medium shot of staffers sprinting past {screen}, paperwork flying, impact frames", "whip_pan"),
-    ]
-    return [setting] + pool[:max(2, min(6, n))]
+    field_name = "VEX" if field == "operative" else "DR. HAKASE"
+    field_lines = {"operative": ("Vex here. Nobody saw this coming. Nobody.", "Vex again. It got bigger while I talked."),
+                   "analyst": ("It's all connected. I have charts. So many charts.", "The charts agree. That worries me.")}[field]
+    return setting, {
+        "talk": [
+            ("anchor", _clip_chars(f"In {label}: {_short(h)}", LINE_MAX),
+             "Medium shot of KUROGANE at the news desk, facing camera, a monitor behind him", "dolly_in"),
+            (field, field_lines[0], f"Close-up of {field_name} reporting, facing camera", "handheld"),
+            ("anchor", "We are told this is normal. It is not.", "Close-up of KUROGANE, one eyebrow raised, facing camera", "static"),
+            (field, field_lines[1], f"Medium shot of {field_name} on location, facing camera", "handheld"),
+        ],
+        "action": [
+            (f"Wide shot of {prop} rising over invented officials, speed lines. Hard cut to: close-up of an official recoiling", "crane_up"),
+            (f"Medium shot of staffers sprinting past {screen}, paperwork flying, impact frames. Hard cut to: overhead shot of papers settling", "whip_pan"),
+            (f"Low angle of {prop} toppling toward the camera. Hard cut to: wide shot of a dust cloud rolling out", "crash_zoom"),
+        ],
+        "still": [
+            ("Extreme close-up of an invented citizen's wide shocked eyes, hatching, sweat drop", "crash_zoom"),
+            (f"Wide shot of {prop} looming in silence, tiny figures below", "dolly_out"),
+            ("Low angle of invented officials frozen mid-gesture under harsh light", "static"),
+        ],
+        "insert": [
+            (f"Close-up of {screen} that reads \"{h}\"", "static"),
+            ("Close-up of a stamped memo sliding across a desk", "static"),
+            ("Close-up of a press badge swinging on a lanyard", "static"),
+        ],
+    }
 
 
 def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = "", week: str = "",
                     title_card: str = "") -> dict:
     """Deterministic weekly storyboard (mock mode and the shape the writer must match): cold open on the week's
     biggest story, one scene per topic segment (a talk line + cutaways, the headline verbatim as the caption),
-    a "markets in 10 seconds" insert, the sign-off."""
+    a "markets in 10 seconds" insert, the sign-off; shot kinds from weekly_plan()."""
     segs = _norm_segments(segments)
     if not segs:
         raise StoryboardError("segments: every segment needs a headline")
     plan = weekly_plan(len(segs), minutes)
     big = (headline or segs[0]["headline"]).replace('"', "'")
-    cold = [
-        ("action", [], "", "Extreme close-up of a red alarm light spinning in a dark war room, sparks of light", "crash_zoom"),
-        ("insert", [], "", f"Close-up of a teletype printing the words \"{big}\" on yellowed paper", "static"),
-        ("still", [], "", "Extreme close-up of KUROGANE's round glasses reflecting a glowing monitor", "dolly_in"),
-        ("action", [], "", f"Wide shot of searchlights sweeping across giant tower screens that all read \"{big}\"", "crane_up"),
-    ][:plan["cold_open"]]
-    scenes = [{"id": "s1", "act": "cold_open", "setting": "a dark invented capital at night, CRT glow, teal shadows",
-               "caption": "", "narration": "", "shots": cold}]
+    cold = {"talk": [], "action": [
+        ("Extreme close-up of a red alarm light spinning in a dark war room. Hard cut to: wide shot of the room flooding with red light", "crash_zoom"),
+        ("Wide shot of searchlights sweeping across giant tower screens. Hard cut to: close-up of one screen flaring white", "crane_up"),
+    ], "still": [
+        ("Extreme close-up of KUROGANE's round glasses reflecting a glowing monitor", "dolly_in"),
+        ("Wide shot of the invented capital skyline at night, every window dark but one", "static"),
+    ], "insert": [
+        (f"Close-up of a teletype printing the words \"{big}\" on yellowed paper", "static"),
+        ("Close-up of a red telephone on a desk, its cord swinging", "static"),
+    ]}
+    scenes = [{"act": "cold_open", "setting": "a dark invented capital at night, CRT glow, teal shadows",
+               "caption": "", "narration": "", "shots": _fill_shots(cold, plan["cold_open"], {})}]
     for i, seg in enumerate(segs):
-        setting, *shots = _segment_shots(i, seg, plan["segments"][i])
+        setting, pools = _segment_pools(seg)
+        used = {"still": i, "insert": 0, "action": i, "talk": 0}   # vary the shared compositions between segments
         scenes.append({"act": SEGMENT_ACTS[min(i, len(SEGMENT_ACTS) - 1)], "topic": seg["topic"], "setting": setting,
                        "caption": seg["headline"], "narration": _words(seg["source_text"] or seg["headline"], NARRATION_MAX_WORDS),
-                       "shots": shots})
-    markets = [
-        ("insert", [], "", "Close-up of a ticker board flipping wildly, arrows up and down, invented currency symbols", "static"),
-        ("still", [], "", "Wide shot of traders frozen mid-shout on a trading floor, paper confetti hanging in the air", "dolly_out"),
-        ("action", [], "", "Medium shot of a giant chart arrow zigzagging across a wall of screens, speed lines", "whip_pan"),
-    ][:plan["markets"]]
+                       "shots": _fill_shots(pools, plan["segments"][i], used)})
+    markets = {"still": [
+        ("Wide shot of traders frozen mid-shout on a trading floor, paper confetti hanging in the air", "dolly_out"),
+        ("Extreme close-up of a trader's eyes reflecting red and green arrows", "dolly_in"),
+    ], "insert": [
+        ("Close-up of a ticker board flipping wildly, arrows up and down, invented currency symbols", "static"),
+        ("Close-up of a chart arrow zigzagging across a wall of screens", "static"),
+    ]}
     scenes.append({"act": "turn", "topic": "markets_10s", "setting": "a vast trading floor under a giant ticker wall",
                    "caption": MARKETS_CAPTION, "narration": "Markets in ten seconds. Up. Down. Sideways. Nobody knows why.",
-                   "shots": markets})
-    sign = [
-        ("still", [], "", "Wide shot of the dark studio, one monitor glowing with the week's headlines", "crane_up"),
-        ("action", [], "", "Medium shot of a giant red alarm button slammed down, a tiny paper flag pops out", "crash_zoom"),
-        ("talk", ["anchor"], "That was the week. " + SIGN_OFF, "Close-up of KUROGANE folding his hands, perfectly deadpan", "dolly_out"),
-    ]
-    sign = sign[-plan["sign_off"]:]
+                   "shots": _fill_shots(markets, plan["markets"], {})})
+    sign = {"talk": [("anchor", "That was the week. " + SIGN_OFF, "Close-up of KUROGANE folding his hands, perfectly deadpan", "dolly_out")],
+            "action": [("Medium shot of a giant red alarm button slammed down. Hard cut to: close-up of a tiny paper flag popping out", "crash_zoom")],
+            "still": [("Wide shot of the dark studio, one monitor glowing with the week's headlines", "crane_up"),
+                      ("Extreme close-up of KUROGANE's folded hands on the desk", "static")],
+            "insert": [("Close-up of the week's scripts stacked in a wastebasket", "static")]}
     scenes.append({"act": "sign_off", "setting": "the anime newsroom after hours, one monitor still glowing",
-                   "caption": "That was the week.", "narration": "", "shots": sign})
+                   "caption": "That was the week.", "narration": "", "shots": _fill_shots(sign, plan["sign_off"], {})})
     for i, sc in enumerate(scenes, 1):
         sc["id"] = f"s{i}"
         sc["shots"] = [{"id": f"s{i}_{j}", "kind": k, "cast": cast, "line": line, "prompt": prompt, "move": move}
@@ -643,8 +875,7 @@ def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = 
 
 
 WEEKLY_RULES = """
-THIS IS A WEEKLY EPISODE: this week's briefing covers {n} headlines, one segment each. Ignore the act list above; use EXACTLY this scene plan, in order:
-{plan}
+THIS IS A WEEKLY EPISODE: this week's briefing covers {n} headlines, one segment each, in the scene plan above (exact, in order).
 - A segment scene opens with a talk shot that briefs its headline, then cutaways that literalize it. Its "caption" is its headline VERBATIM (copy it character for character; it is shown on screen). Set "topic" on every segment scene as given.
 - The markets scene: caption exactly "{markets}", still and insert shots only, no talk.
 - The last shot of the sign_off is the anchor's talk shot ending exactly with "{sign_off}"
@@ -661,19 +892,10 @@ def write_weekly(segments: list[dict], minutes: float = 1.0, headline: str = "",
     """One Router chat call for a weekly episode (one retry on a bad reply). The scene plan, captions and topics
     are enforced from weekly_template's shape; the writer supplies lines, prompts, settings and narration."""
     shape = weekly_template(segments, minutes, headline=headline, week=week)
-    plan_lines = []
-    for i, sc in enumerate(shape["scenes"], 1):
-        kinds = ", ".join(s["kind"] for s in sc["shots"])
-        extra = f', topic "{sc["topic"]}", caption "{sc["caption"]}"' if sc.get("topic") else ""
-        plan_lines.append(f"{i}. act {sc['act']}{extra}: {len(sc['shots'])} shots ({kinds})")
-    rules = WEEKLY_RULES.format(n=len(shape["segments"]), plan="\n".join(plan_lines), markets=MARKETS_CAPTION,
-                                sign_off=SIGN_OFF)
+    rules = WEEKLY_RULES.format(n=len(shape["segments"]), markets=MARKETS_CAPTION, sign_off=SIGN_OFF)
     n = len(shape["scenes"])
-    system = SYSTEM_PROMPT.format(series=SERIES, cast=_cast_block(default_cast()), scenes=n,
-                                  acts=", ".join(sc["act"] for sc in shape["scenes"]),
-                                  shots=sum(len(sc["shots"]) for sc in shape["scenes"]), sign_off=SIGN_OFF,
-                                  moves=", ".join(MOVES),
-                                  style=(f"- Visual style direction from the user: {style}\n" if style else "") + rules)
+    system = _system_prompt(shape, default_cast(),
+                            (f"- Visual style direction from the user: {style}\n" if style else "") + rules)
     user = WEEKLY_USER.format(week=week or "this week", headline=shape["headline"].replace('"', "'"), minutes=minutes,
                               segments="\n".join(f'- {s["topic"]}: "{s["headline"]}" ({s["source_text"][:400]})'
                                                  for s in shape["segments"]))
@@ -705,6 +927,7 @@ def write_weekly(segments: list[dict], minutes: float = 1.0, headline: str = "",
                             "style": style, "week": week, "segments": shape["segments"],
                             "countdown": doc.get("countdown") or COUNTDOWN,
                             "title_card": shape["title_card"]})
+            _check_density(sb, shape)
             return _finish(sb)
         except (ValueError, StoryboardError) as e:
             last_error = str(e)[:300]

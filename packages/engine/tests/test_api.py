@@ -29,7 +29,7 @@ def test_storyboard_validation(tmp_path):
     assert c.post("/api/storyboard", json={"headline": "  "}).status_code == 400
     assert c.post("/api/storyboard", json={"headline": "x", "minutes": 9}).status_code == 400
     j = c.post("/api/storyboard", json={"headline": "Mayor bans Mondays", "minutes": 1}).json()
-    assert len(j["storyboard"]["scenes"]) == 4
+    assert len(j["storyboard"]["scenes"]) == 5
 
 
 def test_cors_preflight_and_private_network(tmp_path):

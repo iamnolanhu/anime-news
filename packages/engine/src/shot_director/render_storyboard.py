@@ -385,6 +385,43 @@ def render(sb: dict, router, media: Path, quality: str = DEFAULT_QUALITY, vertic
     return {"id": entry_id, **fields}
 
 
+def recut(media: Path, shots_file: Path, vertical: bool = False) -> dict:
+    """Cut an episode again from the shots already on disk: no generation, no Router call. Reads <epid>.shots.json
+    (either pipeline: a storyboard render or showrunner's script), rebuilds <epid>.plan.json with the current
+    edit plan, uses the scene narration files already in the media dir (<epid>-narration-<scene>.mp3), and writes
+    <epid>.mp4 (+ .cuts.json, and the 9:16 export with `vertical`). Updates the episode's ledger entry if any."""
+    from . import edit
+    media, shots_file = Path(media).resolve(), Path(shots_file).resolve()
+    doc = json.loads(shots_file.read_text())
+    epid = doc.get("episode_id") or shots_file.name.removesuffix(".shots.json")
+    if "script" in doc:
+        plan, title_card = showrunner.edit_plan(doc["script"], doc["shots"], media), doc["script"].get("title_card")
+    else:
+        sb = doc["storyboard"]
+        narr = {sc["id"]: str(media / f"{epid}-narration-{sc['id']}.mp3") for sc in sb["scenes"]
+                if (media / f"{epid}-narration-{sc['id']}.mp3").exists()}
+        plan, title_card = edit_plan(sb, doc["shots"], media, narr), sb.get("title_card") or sb["headline"][:40].upper()
+    if not plan["scenes"]:
+        raise RuntimeError("nothing to cut: no usable shot on disk")
+    (media / f"{epid}.plan.json").write_text(json.dumps(plan, indent=1))
+    out = media / f"{epid}.mp4"
+    edit.assemble(plan, out, audio=True, base=media)
+    rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+    report = {k: rep.get(k) for k in ("duration", "shots", "cuts_per_minute", "avg_shot_s", "audio", "reuse")}
+    vfile = None
+    if vertical:
+        from .vertical import vertical as to_vertical
+        to_vertical(out, media / f"{epid}.9x16.mp4", title_card)
+        vfile = f"{epid}.9x16.mp4"
+    entry = next((e for e in episode.read_ledger(media) if e.get("episode_id") == epid or e.get("file") == out.name), None)
+    if entry and entry.get("id"):
+        episode._update_ledger(media, entry["id"], {"cut": report, "duration": report["duration"],
+                                                    "cut_shots": report["shots"],
+                                                    "cuts_per_minute": report["cuts_per_minute"],
+                                                    "reuse": report["reuse"], "recut": episode._now()})
+    return {"episode_id": epid, "file": out.name, "path": str(out), "vertical_file": vfile, "report": report}
+
+
 def retry_estimate(sb: dict, shots: list[dict], quality: str, media: Path) -> dict:
     """Spend estimate of a retry: only the failed shots, as a sub-storyboard (cast assets count as cached)."""
     failed = {(r["scene"], r["id"]) for r in shots if not usable(r)}

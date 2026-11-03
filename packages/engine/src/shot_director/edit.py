@@ -13,7 +13,6 @@ changes, loudnorm. No generation happens here; audio.py makes the sound files.
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import logging
 import math
@@ -374,6 +373,29 @@ def _extend(run: list[dict], target: float, fps: int) -> float:
     return total
 
 
+def _fit_exact(tail: list[dict], target: float, fps: int) -> list[float] | None:
+    """Shot lengths that make `tail` last exactly `target` s (whole frames), changing the last shots first within
+    their bounds (a clip 0.6 s to its angle's end and only where its window passes the gate, a still 1 s to
+    STILL_MAX). None when they cannot."""
+    lens = [round(sh["len"] * fps) for sh in tail]
+    need = round(target * fps) - sum(lens)
+    for i in reversed(range(len(tail))):
+        if need == 0:
+            break
+        sh = tail[i]
+        if sh["kind"] == "still":
+            lo, hi = round(1.0 * fps), round(STILL_MAX * fps)
+        else:
+            lo, hi = round(0.6 * fps), int((sh["b"] - sh["start"]) * fps + 1e-6)
+        new = min(max(lens[i] + need, lo), hi)
+        if sh["kind"] == "clip" and new != lens[i] and \
+                sh["src"].seg_sharp(sh["start"], new / fps) < sh["src"].gate_at(sh["start"]):
+            continue
+        need -= new - lens[i]
+        lens[i] = new
+    return [n / fps for n in lens] if need == 0 else None
+
+
 def _run_max(run: list[dict], fps: int) -> float:
     return sum(STILL_MAX if sh["kind"] == "still" else max(sh["len"], max_len(sh["src"], sh["start"], sh["b"], fps))
                for sh in run)
@@ -503,26 +525,23 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                     hosted.add(id(nxt))
                     continue
             if prv is not None and id(prv) not in hosted:
-                room, now = _run_max(prv, fps), sum(x["len"] for x in prv)
+                # the voice starts on a cut of the previous run (the latest one that works) and the shots from
+                # there on are fitted to exactly the lead-in, the first of them at least 0.8 s (R12)
                 best = None
                 for t in marks:
                     j_len = round((t - a0) * fps) / fps
-                    if j_len < 0.85 or a1 - t < TALK_HOLD_MIN or j_len > room:
+                    if j_len < 0.8 or a1 - t < TALK_HOLD_MIN:
                         continue
-                    trial = [dict(x) for x in prv]
-                    total = _extend(trial, j_len, fps)
-                    if total < j_len - 1e-6:
-                        continue
-                    # the voice starts j_len before the run ends; no cut may fall in its first 0.8 s
-                    at, ends = total - j_len, list(itertools.accumulate(x["len"] for x in trial))[:-1]
-                    if any(at + 1e-6 < e < at + 0.8 for e in ends):
-                        continue
-                    if best is None or abs(a1 - t - TALK_HOLD_TARGET) < abs(a1 - best[0] - TALK_HOLD_TARGET):
-                        best = (t, j_len, trial)
+                    for k in reversed(range(len(prv))):
+                        lens = _fit_exact(prv[k:], j_len, fps)
+                        if lens and lens[0] >= 0.8 - 1e-6:
+                            if best is None or abs(a1 - t - TALK_HOLD_TARGET) < abs(a1 - best[0] - TALK_HOLD_TARGET):
+                                best = (t, j_len, k, lens)
+                            break
                 if best:
-                    t, j_len, trial = best
-                    for x, y in zip(prv, trial):
-                        x["len"] = y["len"]
+                    t, j_len, k, lens = best
+                    for x, n in zip(prv[k:], lens):
+                        x["len"] = n
                     sh["p0"] = a0 + j_len
                     hosted.add(id(prv))
         # the segments

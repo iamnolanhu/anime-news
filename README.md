@@ -140,4 +140,4 @@ MIT, see [LICENSE](LICENSE).
 
 ## Analytics
 
-The public site ships Vercel Web Analytics and Speed Insights (both are enabled on the Vercel project), PostHog (pageviews, page leaves, web vitals, exceptions, session replay with every input masked) and optional Google Analytics 4. For GA4, create a property with a web data stream for the production site URL in your Google account, then set `NEXT_PUBLIC_GA_ID` (the `G-...` id) on Vercel. None of them load on localhost or when their key is unset. `track()` in `apps/web/lib/analytics.ts` lists the funnel events the Studio emits.
+The public site ships Vercel Web Analytics and Speed Insights (Vercel Web Analytics and Speed Insights are OFF (they bill on this plan)), PostHog (pageviews, page leaves, web vitals, exceptions, session replay with every input masked) and optional Google Analytics 4. For GA4, create a property with a web data stream for the production site URL in your Google account, then set `NEXT_PUBLIC_GA_ID` (the `G-...` id) on Vercel. None of them load on localhost or when their key is unset. `track()` in `apps/web/lib/analytics.ts` lists the funnel events the Studio emits.

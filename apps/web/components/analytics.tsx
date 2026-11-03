@@ -1,8 +1,6 @@
 "use client";
 
 import { GoogleAnalytics } from "@next/third-parties/google";
-import { Analytics as VercelAnalytics } from "@vercel/analytics/next";
-import { SpeedInsights } from "@vercel/speed-insights/next";
 import { useEffect, useState } from "react";
 import { attachPostHog, studioMode, trackingAllowed } from "@/lib/analytics";
 
@@ -50,8 +48,6 @@ export function Analytics() {
   if (!live) return null;
   return (
     <>
-      <VercelAnalytics mode="production" />
-      <SpeedInsights />
       {gaId ? <GoogleAnalytics gaId={gaId} /> : null}
     </>
   );

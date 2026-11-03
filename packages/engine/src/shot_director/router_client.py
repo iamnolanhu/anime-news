@@ -39,7 +39,6 @@ ENGINES = [
 SEEDANCE_MODEL = "byteplus/dreamina-seedance-2-5-260628"
 CONTINUATION_ENGINE = "bfl/flux-3-video"
 IMAGE_MODEL = os.environ.get("SHOT_DIRECTOR_IMAGE_MODEL", "bfl/flux-3-image")
-SECRETS_FILE = Path.home() / ".claude/.secrets/services/comfy/default.env"
 POLL_SECONDS = 3
 MAX_POLL_SECONDS = 10
 TIMEOUT_SECONDS = 660  # Router's sync cutoff is 10 min
@@ -77,20 +76,11 @@ def clamp_duration(model: str | None, seconds: int | None) -> int:
 
 
 def load_api_key() -> str | None:
-    """COMFY_API_KEY from the environment, else ~/.anime-news/config.json (comfy_api_key), else the legacy
-    local secrets file. None in mock mode. Never logged."""
+    """COMFY_API_KEY from the environment, else ~/.anime-news/config.json (comfy_api_key). None in mock mode.
+    Never logged. (The old fallback to a private secrets file is gone: env + config are the only sources,
+    so the engine's reported mode always matches what it will spend.)"""
     from . import config
-    if config.mock_forced():
-        return None
-    key = config.api_key()
-    if key:
-        return key
-    if SECRETS_FILE.exists():
-        for line in SECRETS_FILE.read_text().splitlines():
-            line = line.strip().removeprefix("export ").strip()
-            if line.startswith("COMFY_API_KEY="):
-                return line.split("=", 1)[1].strip().strip("'\"") or None
-    return None
+    return config.api_key()
 
 
 class RouterError(RuntimeError):

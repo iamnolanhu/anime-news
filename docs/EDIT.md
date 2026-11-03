@@ -94,7 +94,9 @@ with `"at": null` plays on every storyboard scene change and on the end card.
     not drawn.
 11. **Headline lower-third.** A scene with a `headline` shows it once, in the subtitle style, for 2.5 s on its first
     run of pictures (at the scene's start, or right after an opening talk take). No voice plays under it: that run
-    lends no time to a talk take, and the scene's narration starts on the next cut after it (or once it is off).
+    lends no time to a talk take, and the scene's narration starts on the next cut after it (or once it is off). It
+    ends at the earlier of 2.5 s and 0.1 s before the next line starts (and inside its scene); if that leaves under
+    1.2 s it moves to the scene's next quiet stretch (0.1 s after a line ends), and with none it is dropped (logged).
 12. **Countdown** (only when the plan has `countdown`; `render_storyboard` sets it only when the storyboard names a
     label): a big red (#FF2A2A) monospace `00:SS` top-right, its label above, over the last run of pictures of the
     first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. No subtitle under

@@ -44,6 +44,7 @@ BURST_MIN = 3              # this many consecutive short shots of distinct compo
 STILL_HOLD = 1.9           # a still holds (PsyopAnime stills average 1.9 s), with one Ken Burns move
 STILL_MAX = 6.0            # ... and up to this long when a line needs the time
 HEADLINE_S = 2.5           # a scene's headline lower-third holds this long, in a stretch with no voice
+HEADLINE_MIN = 1.2         # ... and is moved to a later quiet stretch, or dropped, rather than shown for less
 EXTEND_SOFT = 2.5          # a line that needs more picture first grows every shot of its run up to this
 TALK_HOLD_MAX = 4.0        # a talk take longer than this lends part of its line to the next (or previous) shots
 TALK_HOLD_MIN = 2.0        # ... but holds at least this long on the speaker
@@ -654,7 +655,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     for h in headlines:
         h["at"], h["dur"] = round(h.pop("anchor").at, 4), HEADLINE_S
     _captions(segs, voices, fps)
-    _headlines(segs, headlines, fps)
+    _headlines(segs, headlines, voices, fps)
     _countdown(plan, segs, fps)
     plan_segments.gated = gated
     plan_segments.voice = voices
@@ -684,14 +685,38 @@ def _captions(segs: list[Seg], voices: list[dict], fps: int) -> None:
             del s.extra["cues"]
 
 
-def _headlines(segs: list[Seg], headlines: list[dict], fps: int) -> None:
-    """Each headline lower-third onto the segments it spans, in subtitle style (`extra["headline"]`)."""
+def _headlines(segs: list[Seg], headlines: list[dict], voices: list[dict], fps: int) -> None:
+    """Each headline lower-third onto the segments it spans, in subtitle style (`extra["headline"]`). It never meets a
+    voice: it ends at the earlier of HEADLINE_S and 0.1 s before the next line starts, inside its scene; under
+    HEADLINE_MIN it moves to the scene's next quiet stretch (0.1 s after a line ends), and with none it is dropped."""
+    speech = sorted((v["at"], v["at"] + v["dur"]) for v in voices)
+    kept = []
     for h in headlines:
+        body = [s for s in segs if s.scene == h["scene"]]
+        hi = body[-1].at + body[-1].frames / fps
+
+        def end_from(at: float) -> float | None:
+            if any(a - 1e-6 <= at < b for a, b in speech):
+                return None
+            return min(at + HEADLINE_S, min([a for a, _ in speech if a > at] + [hi + 0.1]) - 0.1, hi)
+
+        at, end = h["at"], end_from(h["at"])
+        if end is None or end - at < HEADLINE_MIN - 1e-6:
+            later = [(t, end_from(t)) for t in sorted({b + 0.1 for _, b in speech if h["at"] < b + 0.1 < hi})]
+            later = [(t, e) for t, e in later if e is not None and e - t >= HEADLINE_MIN - 1e-6]
+            if not later:
+                log.warning("scene %d: no %.1fs without a voice for the headline %r, dropped", h["scene"], HEADLINE_MIN,
+                            h["text"])
+                continue
+            at, end = later[0]
+        h["at"], h["dur"] = round(at, 4), round(end - at, 4)
+        kept.append(h)
         for s in segs:
             d = s.frames / fps
-            if s.kind in ("clip", "still") and h["at"] + h["dur"] > s.at + 1e-3 and h["at"] < s.at + d - 1e-3:
+            if s.kind in ("clip", "still") and end > s.at + 1e-3 and at < s.at + d - 1e-3:
                 s.extra.setdefault("headline", []).append(
-                    (h["text"], round(max(0.0, h["at"] - s.at), 3), round(min(d, h["at"] + h["dur"] - s.at), 3)))
+                    (h["text"], round(max(0.0, at - s.at), 3), round(min(d, end - s.at), 3)))
+    headlines[:] = kept
 
 
 def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:

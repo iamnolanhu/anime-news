@@ -306,3 +306,34 @@ def test_no_pause_in_a_take_means_no_cut_while_it_speaks(media, tmp_path):
         assert abs(s.start - 0.15) < 1e-6 and abs(s.frames / FPS - 5.75) < 1 / FPS
     report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
     assert metrics(report)["cut_in_line"] == 0
+
+
+def test_a_headline_never_runs_onto_a_talk_take(media, tmp_path):
+    """The headline ends 0.1 s before the next line (at most 2.5 s); under 1.2 s it moves to the scene's next quiet
+    stretch; with none it is dropped."""
+    for name, d in (("w2", 2.1), ("w1a", 1.1), ("w1b", 1.1)):
+        _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d={d}", "-pix_fmt", "yuv420p", str(tmp_path / f"{name}.mp4"))
+    for name in ("ta", "tb", "tc"):   # 3.5 s takes: under TALK_HOLD_MAX, so they hold whole
+        _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=3.5,hue=h=120",
+            "-f", "lavfi", "-i", "aevalsrc='0.4*sin(2*PI*220*t)':s=48000:d=3.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tmp_path / f"{name}.mp4"))
+    talk = lambda n: {"kind": "talk", "clip": str(tmp_path / f"{n}.mp4"), "line": "A short line here."}   # noqa: E731
+    act = lambda n: {"kind": "action", "clip": str(tmp_path / f"{n}.mp4")}                             # noqa: E731
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "headline": "Shortened", "shots": [act("w2"), talk("ta")]},
+        {"beat": "turn", "headline": "Moved", "shots": [act("w1a"), talk("tb"), {"kind": "still", "path": str(media / "still2.png")}]},
+        {"beat": "climax", "headline": "Dropped", "shots": [act("w1b"), talk("tc")]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    heads = {h["text"]: h for h in report["headlines"]}
+    assert set(heads) == {"Shortened", "Moved"}
+    voice = {next(s["scene"] for s in _shots(report) if s["extra"].get("talk") and abs(s["at"] - v["at"]) < 0.5): v
+             for v in report["voice"]}
+    short = heads["Shortened"]
+    assert 1.2 <= short["dur"] < 2.5 and abs(short["at"] + short["dur"] - (voice[0]["at"] - 0.1)) < 1e-3
+    moved = heads["Moved"]
+    assert moved["at"] >= voice[1]["at"] + voice[1]["played"] + 0.1 - 1e-3 and moved["dur"] >= 1.2
+    for h in heads.values():
+        for v in report["voice"]:
+            assert v["at"] >= h["at"] + h["dur"] + 0.1 - 1e-3 or v["at"] + v["played"] <= h["at"] - 0.1 + 1e-3, (h, v)
+    assert not any(c[0] == "Dropped" for s in _shots(report) for c in s["extra"].get("headline", []))

@@ -270,3 +270,32 @@ def test_a_failed_writer_counts_its_billed_calls(tmp_path, monkeypatch):
     res = W.run(["2026-W40"], tmp_path, router=LiveStub(), budget_usd=est * 3, allow_unfinished=True,
                 out=open("/dev/null", "w"))
     assert res["weeks"][0]["status"] == "failed" and res["spent_usd"] == round(2 * rs.PRICE["writer"], 2)
+
+
+def test_retry_is_admitted_and_counted_at_the_failed_shots_cost(tmp_path, monkeypatch):
+    from shot_director import render_storyboard as rs
+    full = live_batch(tmp_path, monkeypatch)
+    picks, _ = W.headlines("2026-W44", tmp_path / "src", use_google=False, fetch=fake_fetch)
+    sb = S.normalize(W.make_storyboard("2026-W40", picks, 1.0, True))
+    shots = [{"scene": sc["id"], "id": s["id"], "kind": s["kind"], "clip": "c.mp4", "frame": "f.png"}
+             for sc in sb["scenes"] for s in sc["shots"]]
+    shots[1].update(clip=None, frame=None)               # one failed shot
+    wdir = W.week_dir(tmp_path, "2026-W40")
+    wdir.mkdir(parents=True)
+    (wdir / "ep.shots.json").write_text(json.dumps({"storyboard": sb, "shots": shots, "episode_id": "ep",
+                                                     "quality": "480p"}))
+    (wdir / "meta.json").write_text(json.dumps({"week": "2026-W40", "status": "partial", "cost_estimate": full,
+                                                "files": {"shots": "ep.shots.json"}, "headlines": []}))
+    retry_usd = rs.retry_estimate(sb, shots, "480p", wdir.resolve())["usd"]
+    assert 0 < retry_usd < full * 0.5
+    caps = []
+
+    def retry(router, media, shots_file, vertical=False, max_cost=None, **k):
+        caps.append(max_cost)
+        return {"episode_id": "ep", "errors": [], "cost_estimate": full}   # rs.retry reports the whole episode
+    monkeypatch.setattr(rs, "retry", retry)
+    res = W.run(["2026-W40"], tmp_path, router=LiveStub(), retry=True, budget_usd=full * 0.5,
+                allow_unfinished=True, out=open("/dev/null", "w"))
+    assert res["weeks"][0]["status"] == "done"                  # admitted: the failed shot fits the budget
+    assert res["weeks"][0]["cost"] == pytest.approx(retry_usd) and res["spent_usd"] == round(retry_usd, 2)
+    assert caps == [pytest.approx(full * 0.5)]

@@ -678,6 +678,21 @@ def render_week(week: str, media: Path, router, minutes: float = 1.0, quality: s
     return meta
 
 
+def retry_estimate_usd(week: str, media: Path, meta: dict | None = None) -> float:
+    """USD estimate of retrying a partial week: only its failed shots (render_storyboard.retry_estimate), with the
+    shared cast assets linked in as retry_week does."""
+    from . import render_storyboard as rs
+    meta = meta if meta is not None else read_meta(media, week)
+    wdir = week_dir(media, week)
+    shots = (meta.get("files") or {}).get("shots")
+    if not shots or not (wdir / shots).exists():
+        raise LookupError(f"{week}: no shots file to retry")
+    share_cache(Path(media), wdir)
+    doc = json.loads((wdir / shots).read_text())
+    return float(rs.retry_estimate(doc["storyboard"], doc["shots"], doc.get("quality", rs.DEFAULT_QUALITY),
+                                   wdir.resolve())["usd"])
+
+
 def retry_week(week: str, media: Path, router, max_cost: float | None = None) -> dict:
     """Re-render only the failed shots of a partial week, then re-cut (render_storyboard.retry)."""
     from . import render_storyboard as rs
@@ -756,7 +771,8 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                 if meta.get("status") != "partial":
                     results.append({"week": week, "status": "skipped", "reason": f"status {meta.get('status')}"})
                     continue
-                est = meta.get("cost_estimate") or 0
+                # the failed shots only, not the whole episode's estimate
+                est = retry_estimate_usd(week, media, meta) if live else 0.0
                 if live and spent + est > budget_usd:
                     print(f"{week}: budget stop (spent ${spent:.2f} of ${budget_usd:.2f})", file=out)
                     results.append({"week": week, "status": "budget_stop"})
@@ -804,7 +820,7 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                                 max_cost=(budget_usd - spent) if live else None, plan=plan)
             # the budget counts USD estimates: the Router's X-Comfy-Credits-Used header is in credits, not dollars
             # (it is recorded in meta.json and the ledger as credits_used)
-            cost = (m.get("cost_estimate") or 0) if live else 0
+            cost = (est if retry else (m.get("cost_estimate") or 0)) if live else 0
             spent += float(cost or 0)
             print(f"{week}: {m['status']} {m.get('duration')} s, {m.get('failed_shots', 0)} failed shots, "
                   f"{(m.get('files') or {}).get('mp4')}", file=out)

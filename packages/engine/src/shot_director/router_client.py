@@ -14,6 +14,7 @@ import json
 import mimetypes
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -76,10 +77,12 @@ def clamp_duration(model: str | None, seconds: int | None) -> int:
 
 
 def load_api_key() -> str | None:
-    """COMFY_API_KEY from the environment, else from the local secrets file. Never logged."""
-    if os.environ.get("SHOT_DIRECTOR_MOCK") == "1":
+    """COMFY_API_KEY from the environment, else ~/.anime-news/config.json (comfy_api_key), else the legacy
+    local secrets file. None in mock mode. Never logged."""
+    from . import config
+    if config.mock_forced():
         return None
-    key = os.environ.get("COMFY_API_KEY", "").strip()
+    key = config.api_key()
     if key:
         return key
     if SECRETS_FILE.exists():
@@ -94,6 +97,38 @@ class RouterError(RuntimeError):
     pass
 
 
+class CreditMeter:
+    """Sums the X-Comfy-Credits-Used response header across every Router call in this process.
+    A render snapshots `total` before and after (one render runs at a time)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.total = 0.0
+        self.seen = 0
+
+    def record(self, headers) -> None:
+        try:
+            value = headers.get("X-Comfy-Credits-Used") or headers.get("x-comfy-credits-used")
+        except AttributeError:
+            return
+        if value in (None, ""):
+            return
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            return
+        with self._lock:
+            self.total += amount
+            self.seen += 1
+
+    def snapshot(self) -> tuple[float, int]:
+        with self._lock:
+            return self.total, self.seen
+
+
+CREDITS = CreditMeter()
+
+
 def _b64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode()
 
@@ -106,10 +141,11 @@ def _data_uri(path: Path, default_mime: str) -> str:
 class LiveRouter:
     mode = "live"
 
-    def __init__(self, api_key: str, media_dir: Path):
+    def __init__(self, api_key: str, media_dir: Path, seedance_resolution: str | None = None):
         self._key = api_key
         self.media = media_dir
         self._warned_ltx_frame = False
+        self.seedance_resolution = seedance_resolution or SEEDANCE_RESOLUTION
 
     # -- HTTP -------------------------------------------------------------
     def _req_full(self, method: str, url: str, body: dict | None = None) -> tuple[int, dict, dict]:
@@ -123,6 +159,7 @@ class LiveRouter:
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
+                CREDITS.record(r.headers)
                 return r.status, dict(r.headers), json.loads(r.read() or b"{}")
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:400]
@@ -228,7 +265,7 @@ class LiveRouter:
                 content.append({"type": "audio_url", "role": "reference_audio",
                                 "audio_url": {"url": _data_uri(voice_ref, "audio/mpeg")}})
             req = {"content": content, "duration": clamp_duration(model, duration), "generate_audio": True,
-                   "resolution": SEEDANCE_RESOLUTION, "ratio": "adaptive" if frame is not None else "16:9"}
+                   "resolution": self.seedance_resolution, "ratio": "adaptive" if frame is not None else "16:9"}
             result = self._run_model(model, req, timeout=SEEDANCE_TIMEOUT_SECONDS)  # 720p under load ran past 11 min
             # seedance output: {"status": succeeded|failed, "content": {"video_url"}, "error": {...}}
             if str(result.get("status", "")).lower() in {"failed", "cancelled", "expired"}:
@@ -292,8 +329,9 @@ class MockRouter:
 
     mode = "mock"
 
-    def __init__(self, media_dir: Path):
+    def __init__(self, media_dir: Path, seedance_resolution: str | None = None):
         self.media = media_dir
+        self.seedance_resolution = seedance_resolution or SEEDANCE_RESOLUTION
 
     def generate_frame(self, prompt: str, body: str, out: Path) -> Path:
         from .presets import CAMERA_BODIES
@@ -314,6 +352,7 @@ class MockRouter:
         return out
 
 
-def make_router(media_dir: Path):
+def make_router(media_dir: Path, seedance_resolution: str | None = None):
     key = load_api_key()
-    return LiveRouter(key, media_dir) if key else MockRouter(media_dir)
+    return (LiveRouter(key, media_dir, seedance_resolution) if key
+            else MockRouter(media_dir, seedance_resolution))

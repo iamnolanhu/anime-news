@@ -409,15 +409,33 @@ def render(sb: dict, router, media: Path, quality: str = DEFAULT_QUALITY, vertic
     return {"id": entry_id, **fields}
 
 
+class RecutError(RuntimeError):
+    pass
+
+
+def _missing_shot_files(doc: dict, media: Path) -> list[str]:
+    """Files a shots.json says were rendered (a clip, or a still's frame) that are not in the media dir."""
+    if "script" in doc:   # showrunner: each rendered shot is its clip
+        names = [s["id"] for s in doc["shots"] if s.get("id")]
+    else:
+        names = [r["clip"] if r["kind"] in storyboard.VIDEO_KINDS else r["frame"] for r in doc["shots"] if usable(r)]
+    return [n for n in names if not ((media / n).is_file() and (media / n).stat().st_size > 0)]
+
+
 def recut(media: Path, shots_file: Path, vertical: bool = False) -> dict:
     """Cut an episode again from the shots already on disk: no generation, no Router call. Reads <epid>.shots.json
     (either pipeline: a storyboard render or showrunner's script), rebuilds <epid>.plan.json with the current
     edit plan, uses the scene narration files already in the media dir (<epid>-narration-<scene>.mp3), and writes
-    <epid>.mp4 (+ .cuts.json, and the 9:16 export with `vertical`). Updates the episode's ledger entry if any."""
+    <epid>.mp4 (+ .cuts.json, and the 9:16 export with `vertical`). Updates the episode's ledger entry if any.
+    Refuses (RecutError, nothing written) when a shot file the shots.json names is missing. The new cut is rendered
+    under a temporary name and replaces the episode only when it holds at least one real shot."""
     from . import edit
     media, shots_file = Path(media).resolve(), Path(shots_file).resolve()
     doc = json.loads(shots_file.read_text())
     epid = doc.get("episode_id") or shots_file.name.removesuffix(".shots.json")
+    missing = _missing_shot_files(doc, media)
+    if missing:
+        raise RecutError(f"{len(missing)} shot file(s) missing from {media}: {', '.join(missing[:5])}; nothing written")
     if "script" in doc:
         plan, title_card = showrunner.edit_plan(doc["script"], doc["shots"], media), doc["script"].get("title_card")
     else:
@@ -426,24 +444,35 @@ def recut(media: Path, shots_file: Path, vertical: bool = False) -> dict:
                 if (media / f"{epid}-narration-{sc['id']}.mp3").exists()}
         plan, title_card = edit_plan(sb, doc["shots"], media, narr), sb.get("title_card") or sb["headline"][:40].upper()
     if not plan["scenes"]:
-        raise RuntimeError("nothing to cut: no usable shot on disk")
-    (media / f"{epid}.plan.json").write_text(json.dumps(plan, indent=1))
-    out = media / f"{epid}.mp4"
-    edit.assemble(plan, out, audio=True, base=media)
-    rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+        raise RecutError("nothing to cut: no usable shot on disk; nothing written")
+    out, tmp = media / f"{epid}.mp4", media / f".{epid}.recut.mp4"
+    vtmp, vout = media / f".{epid}.recut.9x16.mp4", media / f"{epid}.9x16.mp4"
+    temps = [tmp, Path(str(tmp) + ".cuts.json"), vtmp]
+    try:
+        edit.assemble(plan, tmp, audio=True, base=media)
+        rep = json.loads(Path(str(tmp) + ".cuts.json").read_text())
+        if rep.get("shots", 0) < 1:
+            raise RecutError("the new cut has no shot, only the end card; the existing episode is kept")
+        if vertical:
+            from .vertical import vertical as to_vertical
+            to_vertical(tmp, vtmp, title_card)
+        (media / f"{epid}.plan.json").write_text(json.dumps(plan, indent=1))
+        Path(str(tmp) + ".cuts.json").replace(str(out) + ".cuts.json")
+        tmp.replace(out)
+        if vertical:
+            vtmp.replace(vout)
+    finally:
+        for f in temps:
+            f.unlink(missing_ok=True)
     report = {k: rep.get(k) for k in ("duration", "shots", "cuts_per_minute", "avg_shot_s", "audio", "reuse")}
-    vfile = None
-    if vertical:
-        from .vertical import vertical as to_vertical
-        to_vertical(out, media / f"{epid}.9x16.mp4", title_card)
-        vfile = f"{epid}.9x16.mp4"
     entry = next((e for e in episode.read_ledger(media) if e.get("episode_id") == epid or e.get("file") == out.name), None)
     if entry and entry.get("id"):
         episode._update_ledger(media, entry["id"], {"cut": report, "duration": report["duration"],
                                                     "cut_shots": report["shots"],
                                                     "cuts_per_minute": report["cuts_per_minute"],
                                                     "reuse": report["reuse"], "recut": episode._now()})
-    return {"episode_id": epid, "file": out.name, "path": str(out), "vertical_file": vfile, "report": report}
+    return {"episode_id": epid, "file": out.name, "path": str(out), "vertical_file": vout.name if vertical else None,
+            "report": report}
 
 
 def retry_estimate(sb: dict, shots: list[dict], quality: str, media: Path) -> dict:

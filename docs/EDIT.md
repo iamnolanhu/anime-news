@@ -10,6 +10,10 @@ shot-director-cut --plan plan.json --out final.mp4 [--no-audio] [--sheet sheet.p
 anime-news render --recut <episode>.shots.json [--out DIR]   # cut an episode again from the shots on disk, no spend
 ```
 
+`--recut` refuses (exit 1, nothing written) when a shot file named in the shots.json is missing, renders the new cut
+under a temporary name and replaces the episode (video, cuts.json, plan, 9:16) only when the new cut holds at least
+one real shot.
+
 From Python: `edit.assemble(plan, out_path, audio=True, base=plan_dir)`. Next to the video it writes
 `<out>.cuts.json` (`edit.cut_report`): duration, shot count, cuts per minute, average shot, gated angles, the
 `reuse` check, the full timeline, every voice line as placed (`voice`: `played` against the file's `file_dur`),
@@ -52,8 +56,9 @@ with `"at": null` plays on every storyboard scene change and on the end card.
    `still_repeats` must be 0.
 1. **A clip is cut by its angles, never across one (R4).** Seedance action clips carry a hidden "Hard cut to:"
    second angle. Each clip is decoded once at 160x90; a frame whose ffmpeg scene score is over 0.25, or a spike of at
-   least 0.20 that is 1.6x the frame before it, is an internal cut (the first and last 0.2 s are ignored, changes
-   within 0.3 s are one cut zone). An angle is the span between cuts, at least 12 frames, minus one frame of margin
+   least 0.20 that is 1.6x the frame before it, or an isolated spike of at least 0.15 between calm frames (at most
+   0.02 before, 0.05 after: a cut between two similar pictures) is an internal cut (the first and last 0.2 s are
+   ignored, changes within 0.3 s are one cut zone). An angle is the span between cuts, at least 12 frames, minus one frame of margin
    each side. Each angle gives one window, and a window never contains a cut.
 2. **A scene plays forward, in storyboard order (R1-R3, R5).** Shots appear in the order the storyboard gives them;
    a clip's angles appear in source order, each once, so a scene never returns to a clip it left, never runs

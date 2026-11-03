@@ -444,3 +444,31 @@ def test_a_line_never_meets_a_cut_in_its_first_08s_on_a_short_opening_angle(medi
         else:
             assert first[0]["extra"].get("freeze", 0) > 0                     # the only picture holds its last frame
         assert abs(v["played"] - v["file_dur"]) < 1e-3
+
+
+def test_a_still_once_left_never_returns(media, tmp_path):
+    """A still is a source like any other: listed twice in a scene, it is shown once and the cut never comes back
+    to it; the metric counts a return to a still."""
+    still = {"kind": "still", "path": str(media / "still1.png")}
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "shots": [still, {"kind": "action", "clip": str(media / "a.mp4")}, dict(still)]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert [s["kind"] for s in report["timeline"]] == ["still", "clip", "clip", "end"]
+    m = metrics(report)
+    assert m["returns_src"] == 0 and m["aba"] == 0
+    s1, a1 = report["timeline"][0], report["timeline"][1]
+    fake = dict(report, timeline=[s1, a1, dict(s1, at=a1["at"] + 1)] + report["timeline"][3:])
+    assert metrics(fake)["returns_src"] == 1                            # a still return is counted
+
+
+def test_scene_cut_catches_low_scoring_hard_cuts_but_not_re_poses():
+    """The scores measured on the clips on disk: real hard cuts the 0.25 threshold missed, and the animation and
+    camera-move changes that must not count."""
+    assert edit.scene_cut(0.0, 0.182, 0.037)         # EP3 aa249367 2.125 s: cans -> giant clock
+    assert edit.scene_cut(0.012, 0.154, 0.042)       # EP1 fef6e88e 2.5 s: the intern -> his close-up
+    assert edit.scene_cut(0.010, 0.246, 0.177)       # EP3 77d392fb 2.0 s: brain -> tin can (the spike rule)
+    assert edit.scene_cut(0.1, 0.316, 0.05)          # an ordinary cut over 0.25
+    assert not edit.scene_cut(0.005, 0.102, 0.007)   # EP1 e40ed397: animation on twos re-posing
+    assert not edit.scene_cut(0.033, 0.101, 0.023)   # EP2 98c103c2: a small isolated change
+    assert not edit.scene_cut(0.12, 0.16, 0.14)      # a camera move's ramp

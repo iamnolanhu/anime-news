@@ -5,7 +5,8 @@ A port of the art-director review's analyze.py (2026-11-03): the same shot kinds
 is scored the way the review scored the cut it replaces. Differences, all forced by the new plan format:
 - a clip's internal hard cuts come from cuts.json `src_cuts` (the cut detects them itself, same ffmpeg scene
   score 0.25); pass `src_cuts=` to score a cut that predates them;
-- spoken spans come from cuts.json `voice` (dialogue and narration as actually placed), not from plan scenes.
+- spoken spans come from cuts.json `voice` (dialogue and narration as actually placed), not from plan scenes;
+- a still counts as a source for RETURN-src (the review counted clip returns only).
 """
 from __future__ import annotations
 
@@ -93,6 +94,10 @@ def metrics(report: dict, src_cuts: dict | None = None) -> dict:
     for i, r in enumerate(shots):
         sc, flags = r["scene"], []
         prev = shots[i - 1] if i else None
+        if r["src"] and not r["src"].endswith(".mp4") and r["kind"] == "still":   # stills are sources too
+            if r["src"] in seen_src.get(sc, set()) and prev and prev["src"] != r["src"]:
+                flags.append("RETURN-src")
+            seen_src.setdefault(sc, set()).add(r["src"])
         if r["src"].endswith(".mp4") and not r["kind"].startswith("talk"):
             if r["src"] in seen_src.get(sc, set()) and prev and prev["src"] != r["src"]:
                 flags.append("RETURN-src")

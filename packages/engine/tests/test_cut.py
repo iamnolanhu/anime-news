@@ -82,3 +82,49 @@ def test_retry_respects_estimate_only_and_zero_cap(tmp_path, monkeypatch):
         pass
     else:
         raise AssertionError("a zero cap must refuse a live retry")
+
+
+def _recut_media(tmp_path, clip: str | None):
+    """A media dir holding an existing episode (episode-x.mp4 = b"OLD EPISODE") and a one-shot shots.json whose clip
+    is `clip` (None: the file is missing)."""
+    import subprocess
+    media = tmp_path / "m"
+    media.mkdir()
+    (media / "episode-x.mp4").write_bytes(b"OLD EPISODE")
+    (media / "episode-x.plan.json").write_text("{}")
+    if clip:
+        src = "testsrc2=s=320x180:r=24:d=5" if clip == "good" else "color=c=black:s=320x180:r=24:d=5"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", src, "-pix_fmt", "yuv420p",
+                        str(media / "shot.mp4")], check=True)
+    sb = S.normalize({"headline": "Mayor bans Mondays",
+                      "scenes": [{"act": "setup", "shots": [{"kind": "action", "prompt": "Wide shot of a desk"}]}]})
+    shots = [{"id": "s1_1", "scene": "s1", "kind": "action", "cast": [], "line": "", "frame": "f.png",
+              "clip": "shot.mp4", "error": None}]
+    f = media / "episode-x.shots.json"
+    f.write_text(json.dumps({"episode_id": "episode-x", "storyboard": sb, "shots": shots}))
+    return media, f
+
+
+@pytest.mark.parametrize("clip", [None, "black"])
+def test_recut_refuses_and_keeps_the_episode(tmp_path, clip):
+    """--recut writes nothing when a shot file is missing (None), and never replaces the episode with a cut that has
+    no real shot (a black clip fails the sharpness gate, leaving only the end card); it exits non-zero."""
+    from shot_director import cli
+    media, f = _recut_media(tmp_path, clip)
+    with pytest.raises(R.RecutError):
+        R.recut(media, f)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["render", "--recut", str(f), "--out", str(media)])
+    assert e.value.code == 1
+    assert (media / "episode-x.mp4").read_bytes() == b"OLD EPISODE"
+    assert (media / "episode-x.plan.json").read_text() == "{}"
+    assert not (media / "episode-x.mp4.cuts.json").exists() and not list(media.glob(".episode-x.recut*"))
+
+
+def test_recut_replaces_the_episode_only_on_success(tmp_path):
+    media, f = _recut_media(tmp_path, "good")
+    res = R.recut(media, f)
+    assert res["report"]["shots"] >= 1
+    assert (media / "episode-x.mp4").read_bytes()[4:8] == b"ftyp"
+    assert json.loads((media / "episode-x.plan.json").read_text())["scenes"]
+    assert (media / "episode-x.mp4.cuts.json").exists() and not list(media.glob(".episode-x.recut*"))

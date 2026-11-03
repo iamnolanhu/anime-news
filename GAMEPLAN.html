@@ -47,7 +47,9 @@
   <span>Doors <b>5:30</b></span>
   <span>Talks 8:30</span>
   <span>Demos <b>9:00</b></span>
-  <span class="stop">Hard stop <b>10:30</b> <span class="conf">confirm on site</span></span>
+  <span class="stop">Venue hard stop <b>10:30</b></span>
+  <span>Online due <b>Nov 3 12pm ET</b> (= 9am PT) · Winners Nov 10</span>
+  <span>Wi-Fi <b>THEYARD</b> / <code>work@theyard</code></span>
   <a href="https://luma.com/nyc-yjfm?tk=JBDyO8">Luma</a>
   <span id="clock"></span>
 </div>
@@ -79,7 +81,7 @@
         <li><label><input type="checkbox" data-k="p3c"><span>Public GitHub repo pushed (command in the middle column)</span></label></li>
         <li><label><input type="checkbox" data-k="p3d"><span>Submission form sent, bonus track chosen: LTX VFX</span></label></li>
       </ul>
-      <div class="cut">9:00 DEMOS. Submitted by now. 10:30 = absolute last call <span class="conf">confirm on site</span></div>
+      <div class="cut">9:00 DEMOS. Submitted by now. In-person prizes need a live demo tonight (done or not); online form stays open until Nov 3 12pm ET.</div>
     </section>
   </div>
 
@@ -87,10 +89,12 @@
     <section>
       <h2>First 10 minutes on site</h2>
       <ol>
-        <li>Find Comfy staff: hackathon credits + API key. Sign-up form (first 200 get credits): <a href="https://form.typeform.com/to/Ayn9Cwfj">Ayn9Cwfj</a></li>
-        <li>Ask: exact in-person submission mechanics and deadline (page says Nov 3 9 AM PT, Luma says end of tonight) <span class="conf">confirm on site</span></li>
-        <li>Ask: does <code>ltx/ltx-2-5-*</code> accept a first-frame image, and what is the field shape? <span class="conf">confirm on site</span></li>
-        <li>Ask: LTX/FLUX request fields (duration, aspect ratio), status values, where the output URL sits <span class="conf">confirm on site</span></li>
+        <li>Board QR "Free Comfy credits" (sign up, use tonight): <a href="https://form.typeform.com/to/QCBCLTWj">QCBCLTWj</a>. API key at <a href="https://platform.comfy.org">platform.comfy.org</a>; credits must sit on that workspace or the first call 402s. <b>Done 7:08 PM:</b> you are in the shared workspace "NYC Build Night" (pooled credits, other builders spending too). Make the API key under that workspace (left nav → API Keys); iterate in mock mode, spend live calls on final shots + demo.</li>
+        <li>Board QR "Present live today" (demo what you built, done or not, for in-person prizes): <a href="https://form.typeform.com/to/q17QgysT">q17QgysT</a>. Sign up for a slot early.</li>
+        <li>Deadline resolved from the board: online submission due <b>Nov 3 12pm ET</b>; tonight = live demo + in-person prizes; winners Nov 10.</li>
+        <li>Board QR "Starter prompt": <a href="https://comfy-starter.vercel.app">comfy-starter.vercel.app</a>. Useful bits: per-model request schema at <code>GET /v2/models/{provider}/{model}/openapi.json</code> (needs the API key; answers the LTX/FLUX field questions below), sync runs cut at 10 min, results kept 24 h so download promptly, no webhooks.</li>
+        <li><b>Resolved 7:20 PM from openapi.json:</b> LTX 2.5 on Router is text-to-video only (prompt, duration enum 2–20, resolution e.g. 1280x720, fps, generate_audio); it takes NO start frame. Start-frame video = <code>bfl/flux-3-video</code> (mode i2v with <code>keyframes</code>, v2v with <code>start_video</code> continues the previous clip) or <code>minimax/minimax-h3</code> (content items with first_frame). Status values IN_QUEUE / IN_PROGRESS / COMPLETED (+error_type on failure). FLUX URL at <code>result.sample</code>, LTX at <code>result.video_url</code>. Live FLUX image smoke passed in ~18 s.</li>
+        <li><b>DECISION (yours):</b> core video model = LTX (text-only shots, LTX VFX bonus $2k cash, FLUX frame becomes a storyboard preview) or FLUX 3 Video (true frame→clip + shot-to-shot continuation, FLUX bonus in API credits). The client is being made model-aware so it is one env var either way.</li>
         <li>Test Wi-Fi to the Router (<code>curl -sI https://api.comfy.org</code>); phone hotspot if it fails</li>
       </ol>
     </section>
@@ -106,8 +110,8 @@
       <div class="cmd"><code>SHOT_DIRECTOR_VIDEO_MODEL=ltx/ltx-2-5-pro uv run shot-director</code><button>copy</button></div>
       <div class="note">Force mock (bad Wi-Fi demo)</div>
       <div class="cmd"><code>SHOT_DIRECTOR_MOCK=1 uv run shot-director</code><button>copy</button></div>
-      <div class="note">Router smoke test (prints a request_id) <span class="conf">body shape confirm on site</span></div>
-      <div class="cmd"><code>curl -s https://api.comfy.org/v2/models/ltx/ltx-2-5-fast/requests -H "X-API-Key: $COMFY_API_KEY" -H "Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" -d '{"content":[{"type":"text","text":"slow dolly-in on a rain-soaked neon street, 35mm film"}]}'</code><button>copy</button></div>
+      <div class="note">Router smoke test (prints a request_id). Body shape VERIFIED 7:20 PM from the model's openapi.json; key already in <code>.env</code></div>
+      <div class="cmd"><code>curl -s https://api.comfy.org/v2/models/ltx/ltx-2-5-fast/requests -H "X-API-Key: $COMFY_API_KEY" -H "Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" -d '{"prompt":"slow dolly-in on a rain-soaked neon street, 35mm film","duration":2,"resolution":"1280x720","fps":24,"generate_audio":false}'</code><button>copy</button></div>
       <div class="note">Publish (run inside the repo)</div>
       <div class="cmd"><code>gh repo create shot-director --public --source . --push</code><button>copy</button></div>
     </section>
@@ -120,11 +124,12 @@
         <li><label><input type="checkbox" data-k="s1"><span>Public repo</span></label></li>
         <li><label><input type="checkbox" data-k="s2"><span>OSS license (MIT, already in repo)</span></label></li>
         <li><label><input type="checkbox" data-k="s3"><span>Setup instructions (README, already in repo)</span></label></li>
-        <li><label><input type="checkbox" data-k="s4"><span>Demo video: how it was built + why it is new (polish not judged)</span></label></li>
+        <li><label><input type="checkbox" data-k="s4"><span>Demo video, <b>2 min max</b>: how it was built + why it is new (polish not judged); other tools used = say so in the demo</span></label></li>
+        <li><label><input type="checkbox" data-k="s9"><span>Post the demo with <b>#OpenSourceHiggsfield</b> (board step 02 "Ship"); partners may feature it</span></label></li>
         <li><label><input type="checkbox" data-k="s5"><span>Workflow files in <code>workflows/</code> (recommended)</span></label></li>
         <li><label><input type="checkbox" data-k="s6"><span>SFW, no unlicensed IP or likeness in demo frames</span></label></li>
         <li><label><input type="checkbox" data-k="s7"><span>One main + one bonus: LTX VFX ($2k, LTX must be the core video model)</span></label></li>
-        <li><label><input type="checkbox" data-k="s8"><span>Submit: <a href="https://form.typeform.com/to/V1dSQrkS">form V1dSQrkS</a> <span class="conf">in-person path confirm on site</span></span></label></li>
+        <li><label><input type="checkbox" data-k="s8"><span>Submit: <a href="https://form.typeform.com/to/V1dSQrkS">form V1dSQrkS</a> (board QR "Rules + entry" → comfy.org/open-source-higgsfield → this form). One submission per person.</span></label></li>
       </ul>
     </section>
     <section class="demo">

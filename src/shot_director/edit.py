@@ -123,8 +123,9 @@ def clip_profile(clip: str, dur: float, samples: int = 10) -> tuple[float, float
 
 
 def seg_sharpness(clip: str, start: float, src_dur: float) -> float:
-    """Worst of the middle and the last frame of a segment (a smeared tail fails the gate)."""
-    return min(sharpness(clip, start + src_dur / 2), sharpness(clip, start + max(0.0, src_dur - 0.08)))
+    """Worst of the first, middle and last frame of a segment (a smeared head or tail fails the gate)."""
+    return min(sharpness(clip, start + min(0.08, src_dur / 4)), sharpness(clip, start + src_dur / 2),
+               sharpness(clip, start + max(0.0, src_dur - 0.08)))
 
 
 def _wrap_caption(text: str, width: int = 22) -> str:
@@ -180,7 +181,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         clips = [c for c in (resolve(p) for p in scene.get("clips", [])) if c]
         stills = [s for s in (resolve(p) for p in scene.get("stills", [])) if s]
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
-        clip_segs: list[tuple[float, Seg]] = []  # (score, seg)
+        clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
+        candidates: list[tuple[float, Seg]] = []
         freeze_src: list[tuple[str, float]] = []
         for clip in clips:
             dur = _duration(clip)
@@ -203,14 +205,24 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 s.extra["src_dur"] = lens[j]
                 sh = seg_sharpness(clip, starts[j], lens[j])
                 s.extra["sharp"], s.extra["sharp_median"] = round(sh, 1), round(med, 1)
-                if j != near and sh < SHARP_GATE * med:   # sharpness gate: drop smeared windows
-                    gated.append({"src": clip, "start": round(starts[j], 2), "sharp": round(sh, 1),
-                                  "median": round(med, 1)})
-                    continue
-                clip_segs.append((score if j == near else 0, s))
+                s.extra["passes_gate"] = sh >= SHARP_GATE * med
+                candidates.append((sh, s))
+        # sharpness gate applies to every window, the opener included; drop smeared windows
+        for sh, s in candidates:
+            if s.extra["passes_gate"]:
+                clip_segs.append((sh, s))
+            else:
+                gated.append({"src": s.src, "start": round(s.start, 2), "sharp": round(sh, 1),
+                              "median": s.extra["sharp_median"]})
+        if candidates and not clip_segs:   # nothing passes: keep the sharpest window, and say so
+            sh, s = max(candidates, key=lambda x: x[0])
+            gated[:] = [g for g in gated if not (g["src"] == s.src and g["start"] == round(s.start, 2))]
+            clip_segs.append((sh, s))
+            log.warning("scene %d: no clip window passes the sharpness gate; opening on the sharpest "
+                        "anyway (%s @ %.2fs, sharpness %.0f)", si, Path(s.src).name, s.start, sh)
         if not clip_segs and not stills:
             continue
-        # strongest frame opens the scene; the rest round-robin across the clips (different parts)
+        # the sharpest gate-passing window opens the scene; the rest round-robin across the clips
         clip_segs.sort(key=lambda x: -x[0])
         opener = [clip_segs[0][1]] if clip_segs else []
         rest = [s for _, s in clip_segs[1:]]
@@ -234,16 +246,16 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         # one speed ramp per scene, on the 2nd clip segment (or the only one)
         if ordered:
             ramp = ordered[1] if len(ordered) > 1 else ordered[0]
-            ramp.speed = 1.4 if si % 2 == 0 else 0.7
-            out_s = ramp.frames / fps
-            ramp.extra["src_dur"] = out_s / ramp.speed
+            speed = 1.4 if si % 2 == 0 else 0.7
             dur = _duration(ramp.src)
-            if ramp.start + ramp.extra["src_dur"] > dur - 0.05:
-                ramp.start = max(0.0, dur - 0.05 - ramp.extra["src_dur"])
-                if ramp.start == 0.0 and ramp.extra["src_dur"] > dur - 0.05:   # clip too short: shorten output
-                    ramp.extra["src_dur"] = dur - 0.05
-                    ramp.frames = frames(ramp.extra["src_dur"] * ramp.speed)
-            ramp.extra["ramp"] = True
+            # keep the gated window's start (moving it back could pull in smeared frames); a speed-up
+            # that would run past the clip's end shortens the shot instead
+            src_dur = min(ramp.frames / fps / speed, dur - 0.05 - ramp.start)
+            if src_dur * speed >= 0.6:
+                ramp.speed = speed
+                ramp.extra["src_dur"] = src_dur
+                ramp.frames = frames(src_dur * speed)
+                ramp.extra["ramp"] = True
         # still pool: given stills first, then freeze frames from the clips' strongest moments
         pool = list(stills)
         for clip, t in freeze_src:
@@ -253,18 +265,28 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         motions = ["push", "shake", "pull"]
         body: list[Seg] = []
         n_still = 0
+
+        def still_seg(src: str) -> Seg:
+            nonlocal n_still
+            n_still += 1
+            return Seg("still", frames(rng.uniform(*STILL_SEG)), src=src,
+                       motion=motions[(n_still - 1 + si) % 3], caption=cap, scene=si)
+
         for idx, cs in enumerate(ordered):
             body.append(cs)
             # alternate clip / still / clip: a cutaway after clip segments 0, 2, 4 ...
             if idx % 2 == 0 and idx < len(ordered) - 1 and pool:
-                st = Seg("still", frames(rng.uniform(*STILL_SEG)), src=pool[n_still % len(pool)],
-                         motion=motions[(n_still + si) % 3], caption=cap, scene=si)
-                body.append(st)
-                n_still += 1
-        if not ordered:   # stills-only scene
-            for i, p in enumerate(pool[:3]):
-                body.append(Seg("still", frames(rng.uniform(*STILL_SEG)), src=p, motion=motions[i % 3],
-                                caption=cap, scene=si))
+                body.append(still_seg(pool[n_still % len(pool)]))
+        if ordered:
+            # every supplied still is used at least once, even in a one-clip scene: the leftovers go
+            # before the last clip segment (or after the only one)
+            left = [p for p in stills if p not in {b.src for b in body}]
+            for p in left:
+                pos = len(body) - 1 if len(ordered) > 1 else len(body)
+                body.insert(pos, still_seg(p))
+        else:   # stills-only scene: a montage of every supplied still
+            for p in pool:
+                body.append(still_seg(p))
         # action beats: a burst of 0.33 s shots from scattered parts of the clips, before the last shot
         if action and ordered:
             burst = []
@@ -288,7 +310,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             src = ordered[-1].src
             n_crt = frames(rng.uniform(*CRT_SEG))
             d = _duration(src)
-            body.insert(0, Seg("crt", n_crt, src=src, start=max(0.0, d / 2 - n_crt / fps / 2), caption=cap,
+            body.insert(0, Seg("crt", n_crt, src=src, start=min(ordered[-1].start, max(0.0, d - n_crt / fps - 0.05)), caption=cap,
                                scene=si, extra={"src_dur": n_crt / fps}))
         # 1-frame black on hard beats: before the speed ramp and before the scene's last shot
         final: list[Seg] = []

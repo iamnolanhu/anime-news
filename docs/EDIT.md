@@ -39,21 +39,30 @@ beat; `"action": true` marks one explicitly.
    scattered parts of the scene's clips, just before the scene's last shot. The test cut averaged 1.34 s.
 3. **Stills become cutaways** of 0.9 to 1.3 s. Each one gets a Ken Burns push-in, a pull-out, or a
    decaying camera shake, in rotation. The order is clip, still, clip, clip, still, clip... When a scene
-   has too few stills, freeze frames taken at the clips' sharpest moments fill in.
+   has too few stills, freeze frames taken at the clips' sharpest moments fill in. Every supplied still
+   is used at least once: leftovers go before the scene's last clip shot (or after the only one, in a
+   one-clip scene), and a scene with no usable clips becomes a montage of all its stills.
 4. **Cold open:** the title and logline sit over the sharpest frame of the whole episode, with a crash
    zoom, for 1.25 s. A scene opener on the same moment continues from where the title ends, so the
    moment is not shown twice.
-5. **Every scene opens on its strongest frame** (the sharpest of 10 samples), with a quick push-in.
+5. **Every scene opens on its strongest shot**: the sharpest window that passes the sharpness gate
+   (rule 9), with a quick push-in.
 6. **Hard cuts dominate.** A 2-frame white flash marks every scene change. A 1-frame black marks the
    hard beats: before the speed ramp and before the scene's last shot.
 7. **One speed ramp per scene**, on the second clip segment: `setpts` 1.4 (slow motion) on even scenes,
-   0.7 (sped up) on odd ones.
+   0.7 (sped up) on odd ones. The ramp keeps the window's start; a speed-up that would run past the
+   clip's end shortens the shot (and is skipped below 0.6 s) rather than reaching back into frames the
+   gate never checked.
 8. **CRT-monitor insert** (0.5 to 0.8 s) as the transition into every other scene: the shot sits inside
    a dark bezel with scanlines, barrel curvature (`lenscorrection`), a blue tint and grain.
-9. **Sharpness gate.** For every candidate segment, the middle frame and the last frame are sampled
+9. **Sharpness gate.** For every candidate segment, the first, middle and last frames are sampled
    (160x90 grayscale through ffmpeg) and the Laplacian variance is computed in pure Python, so neither
-   numpy nor OpenCV is needed. A segment scoring below 40 % of the clip's median sharpness is dropped
-   and listed in `gated_segments`. Burst shots go through the same gate. The scene's last shot is the
+   numpy nor OpenCV is needed. The segment's score is its worst frame. A segment scoring below 40 % of
+   the clip's median sharpness (10 samples) is dropped and listed in `gated_segments`. The gate applies
+   to every window, the scene opener included, and burst shots go through it too. If no window in a
+   scene passes, the sharpest one is kept as the opener and a warning is logged. The CRT insert reuses
+   a gate-passing window. The gate is relative to each clip's median, so a clip that is mostly blurred
+   has a blurred median and gates little. The scene's last shot is the
    segment with the sharpest final frame, so a smeared whip-pan tail never ends a scene. In the test,
    the motion-blurred tail of `media/sequence-fe2c7f01.mp4` (13.0 to 14.5 s, sharpness 390 to 780
    against a median of 4197) was gated out.

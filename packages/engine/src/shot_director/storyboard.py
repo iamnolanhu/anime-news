@@ -8,6 +8,7 @@ No cap on scenes or shots: the writer targets PsyopAnime pace, about 20 shots a 
 Schema: docs/STORYBOARD.md.
 """
 
+import copy
 import hashlib
 import html
 import json
@@ -41,8 +42,7 @@ SIGN_OFF = "Back next week."
 COUNTDOWN = "NEXT BRIEFING IN"   # the countdown clock's default label
 
 # ElevenLabs premade voices used only as timbre references for Seedance (the clip speaks the line itself).
-DEFAULT_VOICES = {"anchor": "onwK4e9ZLuTAKqWW03F9", "operative": "XB0fDUnXU5powFXDhCwa",
-                  "analyst": "N2lVS1w4EtoT3dr4eOWO"}
+DEFAULT_VOICES = {cid: c["voice"] for cid, c in writer.CAST.items()}
 
 
 CAST_FILE = "cast.json"         # optional, in the media dir: replaces the built-in cast (schema: docs/STORYBOARD.md)
@@ -53,8 +53,7 @@ TRAIT_MAX_WORDS = 30
 
 
 def builtin_cast() -> list[dict]:
-    return [{"id": cid, "name": c["name"], "role": c["role"], "look": c["look"], "voice": DEFAULT_VOICES[cid]}
-            for cid, c in writer.CAST.items()]
+    return [{"id": cid, **copy.deepcopy(c)} for cid, c in writer.CAST.items()]
 
 
 def cast_file(media=None):
@@ -449,9 +448,9 @@ _TEMPLATE = {
     "escalation": ("a rooftop over the invented capital at dusk, painted sky, wind", "It is getting bigger.",
                    "The situation escalated. Then it escalated again. The clock is still running.", {
         "talk": [
-            ("operative", "{operative_spoken} here. It's worse than we thought.", "Close-up of {operative} whispering into her wrist on a windy rooftop", "handheld"),
+            ("operative", "{operative_spoken} here. It's worse than we thought.", "Close-up of {operative} speaking into her fuzzy microphone on a windy rooftop", "handheld"),
             ("operative", "It doubled. Then it doubled again.", "Medium shot of {operative} crouched behind a rooftop vent, facing camera", "static"),
-            ("operative", "I need backup. And a much bigger net.", "Close-up of {operative} gripping her earpiece, wind in her hair, facing camera", "handheld"),
+            ("operative", "I need backup. And a much bigger net.", "Close-up of {operative} gripping her fuzzy microphone, wind in her hair, facing camera", "handheld"),
         ],
         "action": [
             ("Wide shot of the absurd prop growing to the size of a building. Hard cut to: close-up of citizens pointing upward", "crane_up"),
@@ -474,7 +473,7 @@ _TEMPLATE = {
         "talk": [
             ("analyst", "It's all connected. I have charts. So many charts.", "Close-up of {analyst} before a red-string evidence board", "dolly_in"),
             ("analyst", "Follow the string. The string always knows.", "Medium shot of {analyst} tapping the evidence board, facing camera", "static"),
-            ("analyst", "I ran the numbers. The numbers ran away.", "Close-up of {analyst} pushing up his glasses, facing camera", "dolly_in"),
+            ("analyst", "I ran the numbers. The numbers ran away.", "Close-up of {analyst} pushing up her red glasses, facing camera", "dolly_in"),
         ],
         "action": [
             ("Medium shot of red string snapping taut across a wall of pinned photos. Hard cut to: close-up of a pin popping loose", "orbit"),
@@ -788,15 +787,17 @@ def _segment_pools(seg: dict) -> tuple[str, dict]:
     setting, field, screen, prop = _TOPIC_LOOK.get(seg["topic"], _DEFAULT_LOOK)
     h = seg["headline"].replace('"', "'")
     label = TOPIC_LABELS.get(seg["topic"], seg["topic"])
-    field_name = "VEX" if field == "operative" else "DR. HAKASE"
-    field_lines = {"operative": ("Vex here. Nobody saw this coming. Nobody.", "Vex again. It got bigger while I talked."),
+    names = {c["id"]: c["name"] for c in default_cast()}
+    field_name, anchor_name = names[field], names["anchor"]
+    spoken = field_name.title() if field == "operative" else field_name
+    field_lines = {"operative": (f"{spoken} here. Nobody saw this coming. Nobody.", f"{spoken} again. It got bigger while I talked."),
                    "analyst": ("It's all connected. I have charts. So many charts.", "The charts agree. That worries me.")}[field]
     return setting, {
         "talk": [
             ("anchor", _clip_chars(f"In {label}: {_short(h)}", LINE_MAX),
-             "Medium shot of KUROGANE at the news desk, facing camera, a monitor behind him", "dolly_in"),
+             f"Medium shot of {anchor_name} at the news desk, facing camera, a monitor behind her", "dolly_in"),
             (field, field_lines[0], f"Close-up of {field_name} reporting, facing camera", "handheld"),
-            ("anchor", "We are told this is normal. It is not.", "Close-up of KUROGANE, one eyebrow raised, facing camera", "static"),
+            ("anchor", "We are told this is normal. It is not.", f"Close-up of {anchor_name}, one eyebrow raised, facing camera", "static"),
             (field, field_lines[1], f"Medium shot of {field_name} on location, facing camera", "handheld"),
         ],
         "action": [
@@ -825,13 +826,14 @@ def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = 
     segs = _norm_segments(segments)
     if not segs:
         raise StoryboardError("segments: every segment needs a headline")
+    anchor_name = next(c["name"] for c in default_cast() if c["id"] == "anchor")
     plan = weekly_plan(len(segs), minutes)
     big = (headline or segs[0]["headline"]).replace('"', "'")
     cold = {"talk": [], "action": [
         ("Extreme close-up of a red alarm light spinning in a dark war room. Hard cut to: wide shot of the room flooding with red light", "crash_zoom"),
         ("Wide shot of searchlights sweeping across giant tower screens. Hard cut to: close-up of one screen flaring white", "crane_up"),
     ], "still": [
-        ("Extreme close-up of KUROGANE's round glasses reflecting a glowing monitor", "dolly_in"),
+        (f"Extreme close-up of {anchor_name}'s amber eyes reflecting a glowing monitor", "dolly_in"),
         ("Wide shot of the invented capital skyline at night, every window dark but one", "static"),
     ], "insert": [
         (f"Close-up of a teletype printing the words \"{big}\" on yellowed paper", "static"),
@@ -855,10 +857,10 @@ def weekly_template(segments: list[dict], minutes: float = 1.0, headline: str = 
     scenes.append({"act": "turn", "topic": "markets_10s", "setting": "a vast trading floor under a giant ticker wall",
                    "caption": MARKETS_CAPTION, "narration": "Markets in ten seconds. Up. Down. Sideways. Nobody knows why.",
                    "shots": _fill_shots(markets, plan["markets"], {})})
-    sign = {"talk": [("anchor", "That was the week. " + SIGN_OFF, "Close-up of KUROGANE folding his hands, perfectly deadpan", "dolly_out")],
+    sign = {"talk": [("anchor", "That was the week. " + SIGN_OFF, f"Close-up of {anchor_name} folding her hands, perfectly deadpan", "dolly_out")],
             "action": [("Medium shot of a giant red alarm button slammed down. Hard cut to: close-up of a tiny paper flag popping out", "crash_zoom")],
             "still": [("Wide shot of the dark studio, one monitor glowing with the week's headlines", "crane_up"),
-                      ("Extreme close-up of KUROGANE's folded hands on the desk", "static")],
+                      (f"Extreme close-up of {anchor_name}'s folded hands on the desk", "static")],
             "insert": [("Close-up of the week's scripts stacked in a wastebasket", "static")]}
     scenes.append({"act": "sign_off", "setting": "the anime newsroom after hours, one monitor still glowing",
                    "caption": "That was the week.", "narration": "", "shots": _fill_shots(sign, plan["sign_off"], {})})

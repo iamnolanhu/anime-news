@@ -4,7 +4,19 @@
 
 **Site:** https://anime-news-nine.vercel.app ([episodes](https://anime-news-nine.vercel.app/episodes), [studio](https://anime-news-nine.vercel.app/studio))
 
-![Three Anime News episodes: Operation Spamputer, The Great Thaw, The Great Fumble](apps/web/public/readme-poster.jpg)
+![SHION, the Anchor of THE WEEKLY BRIEFING, opening the fridges-cyberwar episode](apps/web/public/readme-poster.jpg)
+
+## The cast
+
+Three original characters front every episode (ids `anchor`, `operative`, `analyst`; the default of the engine, the Studio's writer and the weekly builder):
+
+| | Role | Look | Voice (ElevenLabs) |
+| --- | --- | --- | --- |
+| **SHION** | the Anchor | crimson high ponytail, amber eyes, navy suit with gold piping, gold fountain pen; perfectly composed, one raised eyebrow is the punchline | Sarah |
+| **HINA** | the Field Reporter | copper bob with a cowlick, mustard hoodie under a navy PRESS vest, fuzzy mic; fearless, reports from inside the disaster | Laura |
+| **DR. RENA** | the Analyst | dark-teal waves, red half-rim glasses, charcoal blazer, clipboard; has a chart for everything | Lily |
+
+Swap them with a `cast.json` in the media dir, no code change ([docs/STORYBOARD.md](docs/STORYBOARD.md#the-cast-file)).
 
 ## Three ways to use it
 

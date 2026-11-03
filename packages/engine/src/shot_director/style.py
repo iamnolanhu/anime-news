@@ -10,6 +10,7 @@ See docs/WRITER.md.
 import base64
 from pathlib import Path
 
+from . import writer
 from .router_client import IMAGE_MODEL, LiveRouter, RouterError, load_api_key
 
 SHEET_NAME = "style-sheet.png"
@@ -23,9 +24,11 @@ SHEET_TEMPLATE = (
     "art, hatching on the face, flat cel shading, flat painted background, film grain, VHS softness, teal "
     "shadows against burnt-orange highlights, high-contrast dramatic lighting. Safe for work, no logos, "
     "no text except the word PRESS on the badge, no real people.")
-BUILTIN_ANCHOR = ("The Anchor, an original character, a stern middle-aged man with a short silver crew cut and round "
-                  "glasses, dark jacket with gold trim and a PRESS badge on the lapel,")
-SHEET_PROMPT = SHEET_TEMPLATE.format(anchor=BUILTIN_ANCHOR)
+def _anchor_text(anchor: dict) -> str:
+    return f"The Anchor, {anchor['name']}, an original character, {anchor['look']},"
+
+
+SHEET_PROMPT = SHEET_TEMPLATE.format(anchor=_anchor_text(writer.CAST["anchor"]))  # the built-in anchor
 
 
 def sheet_prompt(media_dir: Path) -> str:
@@ -35,7 +38,7 @@ def sheet_prompt(media_dir: Path) -> str:
     anchor = next((c for c in load_cast_file(media_dir) or [] if c["id"] == "anchor"), None)
     if not anchor:
         return SHEET_PROMPT
-    return SHEET_TEMPLATE.format(anchor=f"The Anchor, {anchor['name']}, an original character, {anchor['look']},")
+    return SHEET_TEMPLATE.format(anchor=_anchor_text(anchor))
 
 
 REFERENCE_LEAD = (

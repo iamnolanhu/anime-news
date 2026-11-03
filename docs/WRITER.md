@@ -49,8 +49,8 @@ requested counts; a stale hit (counts changed) is ignored and overwritten. Delet
 ## Style sheet: the series' visual contract
 
 `<media>/style-sheet.png` is generated ONCE by `ensure_style_sheet(media_dir)` with `bfl/flux-3-image`
-(16:9, 1k, `grounding: false`): a 90s OVA newsroom still of the Anchor (original character: silver crew cut,
-round glasses, dark jacket with gold trim, PRESS badge) at a desk in front of a wall of world-map monitors,
+(16:9, 1k, `grounding: false`): a 90s OVA newsroom still of the Anchor (original character: SHION, crimson high ponytail,
+amber eyes, navy suit with gold piping, gold fountain pen; built from the default cast's anchor) at a desk in front of a wall of world-map monitors,
 heavy ink lines, cel shading, grain, VHS softness, teal/orange palette.
 
 Every later start frame passes it as the FLUX 3 image `images` reference (the model accepts 1-10 references
@@ -93,8 +93,8 @@ VOICE
 
 CAST (original archetypes only; never anyone else)
 - "the Anchor": stern host at a news desk in front of a wall of world-map monitors. Recurring spine of the show.
-- "the Field Operative": trench-coated reporter on location, treats everything like a covert mission.
-- "the Analyst": sleep-deprived expert surrounded by charts and red string boards.
+- "the Field Reporter": a hoodie-and-press-vest reporter on location, fearless, reports from inside the disaster with a straight face.
+- "the Analyst": an unbothered expert with a chart for everything and a tiny smug smile when she is right.
 - Crowds, officials and staffers are invented, unnamed extras.
 
 HARD RULES

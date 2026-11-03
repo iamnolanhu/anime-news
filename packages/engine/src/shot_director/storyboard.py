@@ -91,7 +91,9 @@ def fetch_url(url: str) -> str:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (anime-news engine)",
                                                    "Accept": "text/html,text/plain;q=0.9,*/*;q=0.5"})
-        with urllib.request.urlopen(req, timeout=URL_TIMEOUT) as r:
+        from . import hosted
+        opener = hosted.open_public if hosted.enabled() else urllib.request.urlopen
+        with opener(req, timeout=URL_TIMEOUT) as r:
             raw = r.read(2_000_000)
             charset = r.headers.get_content_charset() or "utf-8"
         return strip_html(raw.decode(charset, errors="replace"))[:SOURCE_MAX]

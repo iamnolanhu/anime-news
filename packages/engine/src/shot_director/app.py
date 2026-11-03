@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, episode, news, presets
+from . import config, episode, hosted, news, presets
 from .router_client import ENGINES, IMAGE_MODEL, VIDEO_MODEL, RouterError, make_router
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +36,9 @@ STATIC = Path(__file__).parent / "static"
 # Patterns with * still work when set explicitly in ANIME_NEWS_ALLOWED_ORIGINS (e.g. for preview deploys).
 DEFAULT_ORIGINS = "https://anime-news-nine.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
 MAX_MINUTES = 5.0
+# Hosted mode: a render may carry this many seconds of shots per allowed minute (the writer makes about 4 scenes of
+# 3-6 five-second shots a minute, and the cut trims them), so an edited storyboard cannot grow without bound.
+HOSTED_SHOT_SECONDS_PER_MINUTE = 2.5
 
 
 def _version() -> str:
@@ -180,22 +183,71 @@ class EpisodeRequest(BaseModel):
 # -- render jobs ----------------------------------------------------------------------------------
 
 class Jobs:
-    """At most one render at a time, run on a background thread; jobs live in memory."""
+    """Render jobs on background threads; jobs live in memory. Up to `max_parallel` run at once and the rest wait
+    in a queue (the local engine runs one and answers 409 instead of queueing; see post_render)."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_parallel: int = 1) -> None:
         self.lock = threading.Lock()
         self.jobs: dict[str, dict] = {}
         self.cancels: dict[str, threading.Event] = {}
-        self.running: str | None = None
+        self.active: set[str] = set()
+        self.pending: deque[tuple[str, object]] = deque()
+        self.max_parallel = max(1, max_parallel)
 
     def public(self, job_id: str) -> dict | None:
         with self.lock:
             j = self.jobs.get(job_id)
-            return {k: v for k, v in j.items() if not k.startswith("_")} if j else None
+            if not j:
+                return None
+            out = {k: v for k, v in j.items() if not k.startswith("_")}
+            if out.get("status") == "queued":
+                pos = next((i for i, (jid, _) in enumerate(self.pending) if jid == job_id), None)
+                if pos is not None:
+                    out["position"] = pos + 1
+                    out["stage"] = f"queued, {pos + 1} ahead of you" if pos else "queued, next up"
+        return out
 
     def update(self, job_id: str, **fields) -> None:
         with self.lock:
             self.jobs[job_id].update(fields)
+
+    def submit(self, job_id: str, fn) -> None:
+        """Start `fn` now when a slot is free, else queue it (call with the job already registered)."""
+        with self.lock:
+            if len(self.active) < self.max_parallel:
+                self.active.add(job_id)
+                start = True
+            else:
+                self.pending.append((job_id, fn))
+                start = False
+        if start:
+            self._start(job_id, fn)
+
+    def _start(self, job_id: str, fn) -> None:
+        def run() -> None:
+            try:
+                fn()
+            finally:
+                self._finished(job_id)
+        threading.Thread(target=run, daemon=True, name=f"render-{job_id}").start()
+
+    def _finished(self, job_id: str) -> None:
+        with self.lock:
+            self.active.discard(job_id)
+            nxt = self.pending.popleft() if self.pending and len(self.active) < self.max_parallel else None
+            if nxt:
+                self.active.add(nxt[0])
+        if nxt:
+            self._start(*nxt)
+
+    def drop_queued(self, job_id: str) -> bool:
+        """Remove a job that has not started yet. True when it was still queued."""
+        with self.lock:
+            for i, (jid, _) in enumerate(self.pending):
+                if jid == job_id:
+                    del self.pending[i]
+                    return True
+        return False
 
 
 def _abs(base: str, name: str | None) -> str | None:
@@ -230,6 +282,9 @@ def start_auto_channel(media: Path) -> None:
 def create_app(media: Path | None = None) -> FastAPI:
     media = Path(media or config.media_dir()).expanduser().resolve()
     media.mkdir(parents=True, exist_ok=True)
+    is_hosted = hosted.enabled()
+    usage = hosted.Usage(media)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         start_auto_channel(media)
@@ -237,14 +292,34 @@ def create_app(media: Path | None = None) -> FastAPI:
 
     app = FastAPI(title="Anime News engine", version=_version(), lifespan=lifespan)
     app.state.media = media
-    jobs = Jobs()
+    jobs = Jobs(hosted.limits()["max_parallel_jobs"] if is_hosted else 1)
     app.state.jobs = jobs
 
     @app.exception_handler(AccessDenied)
     def _access_denied(_: Request, exc: AccessDenied) -> JSONResponse:
         return JSONResponse({"error": exc.message, "detail": exc.message}, status_code=exc.status)
 
+    @app.exception_handler(hosted.LimitReached)
+    def _limit_reached(_: Request, exc: hosted.LimitReached) -> JSONResponse:
+        return JSONResponse({"error": exc.message, "detail": exc.message}, status_code=429,
+                            headers={"Retry-After": str(exc.retry_after)})
+
     _install_cors(app)
+    if is_hosted:
+        @app.middleware("http")
+        async def access_gate(request: Request, call_next):
+            if not hosted.access_ok(request.headers):
+                return JSONResponse({"error": "access token required", "detail": "access token required"},
+                                    status_code=401)
+            return await call_next(request)
+
+    def visitor(request: Request) -> str:
+        return hosted.client_ip(request.headers, request.client.host if request.client else None)
+
+    # Hosted: media URLs are site-relative (/media/x) so the site's proxy serves them from its own origin.
+    def media_base(request: Request) -> str:
+        return "/" if is_hosted else str(request.base_url)
+
     app.mount("/media", StaticFiles(directory=media), name="media")
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -258,17 +333,34 @@ def create_app(media: Path | None = None) -> FastAPI:
 
     # -- contract ---------------------------------------------------------------------------------
     @app.get("/api/health")
-    def health() -> dict:
+    def health(request: Request) -> dict:
         has = config.has_key()
-        return {"ok": True, "version": _version(), "mode": config.mode(), "has_credential": has, "has_api_key": has}
+        out = {"ok": True, "version": _version(), "mode": config.mode(), "has_credential": has, "has_api_key": has}
+        if is_hosted:
+            lim = hosted.limits()
+            left = usage.summary(visitor(request))
+            with jobs.lock:
+                running, queued = len(jobs.active), len(jobs.pending)
+            out.update({"hosted": True, "limits": {k: v for k, v in lim.items() if k != "writer_usd"},
+                        "remaining_for_you": left["renders_left_for_you"],
+                        "storyboards_left_for_you": left["storyboards_left_for_you"],
+                        "budget_remaining_usd": left["budget_remaining_usd"],
+                        "renders_running": running, "renders_queued": queued})
+        return out
 
     @app.get("/api/config")
     def get_config() -> dict:
         has = config.has_key()
-        return {"has_credential": has, "has_api_key": has, "mode": config.mode(), "media_dir": str(media)}
+        out = {"has_credential": has, "has_api_key": has, "mode": config.mode(), "media_dir": str(media)}
+        if is_hosted:
+            out.pop("media_dir")
+            out["hosted"] = True
+        return out
 
     @app.put("/api/config", dependencies=[TOKEN])
     def put_config(body: ConfigBody) -> dict:
+        if is_hosted:
+            raise HTTPException(403, "the shared demo engine uses its own key; run your own engine to use yours")
         value = body.comfy_api_key if body.comfy_api_key is not None else body.comfy_credential
         if value is None:
             raise HTTPException(400, "send {\"comfy_api_key\": \"...\"} (an empty string clears it)")
@@ -279,7 +371,7 @@ def create_app(media: Path | None = None) -> FastAPI:
         return {"has_credential": has, "has_api_key": has, "mode": config.mode()}
 
     @app.post("/api/storyboard", dependencies=[SPEND])
-    def post_storyboard(body: StoryboardBody) -> dict:
+    def post_storyboard(body: StoryboardBody, request: Request) -> dict:
         from . import storyboard
         headline = " ".join((body.headline or "").split())
         if not headline:
@@ -287,48 +379,72 @@ def create_app(media: Path | None = None) -> FastAPI:
         minutes = 1.0 if body.minutes is None else body.minutes
         if not (0 < minutes <= MAX_MINUTES):
             raise HTTPException(400, f"minutes must be above 0 and at most {MAX_MINUTES:g}")
+        charged = None
+        if is_hosted:
+            lim = hosted.limits()
+            minutes = min(minutes, lim["max_minutes"])
+            charged = (visitor(request), "storyboards", lim["writer_usd"])
+            usage.charge(*charged)
         try:
             sb = storyboard.build(headline, text=body.text or "", url=body.url or "", minutes=minutes,
                                   style=body.style or "")
         except storyboard.StoryboardError as e:
+            if charged:
+                usage.refund(*charged)
             raise HTTPException(502, str(e)) from e
         except Exception as e:  # noqa: BLE001 - network, 402, timeouts: the writer failed
+            if charged:
+                usage.refund(*charged)
             raise HTTPException(502, f"writer failed: {type(e).__name__}: {str(e)[:300]}") from e
         return {"storyboard": sb, "stats": storyboard.stats(sb)}
 
     @app.post("/api/render", dependencies=[EPISODE])
     def post_render(body: RenderBody, request: Request) -> JSONResponse:
         from . import render_storyboard as rs, storyboard
-        if body.quality not in rs.QUALITIES:
+        quality = hosted.limits()["quality"] if is_hosted else body.quality
+        if quality not in rs.QUALITIES:
             raise HTTPException(400, f"quality must be one of {', '.join(rs.QUALITIES)}")
         try:
             sb = storyboard.normalize(body.storyboard)
         except storyboard.StoryboardError as e:
             raise HTTPException(400, str(e)) from e
-        router = make_router(media, body.quality)
-        est = rs.estimate(sb, body.quality, media)
+        router = make_router(media, quality)
+        est = rs.estimate(sb, quality, media)
         cap = float(os.environ.get("ANIME_NEWS_MAX_COST", "0") or 0)
         if router.mode == "live" and cap and est["usd"] > cap:
             raise HTTPException(400, f"estimated ${est['usd']:.2f} is over ANIME_NEWS_MAX_COST ${cap:.2f}")
-        base = str(request.base_url)
+        charged = None
+        if is_hosted:
+            max_s = hosted.limits()["max_minutes"] * 60 * HOSTED_SHOT_SECONDS_PER_MINUTE
+            shot_s = sum(s["seconds"] for sc in sb["scenes"] for s in sc["shots"])
+            if shot_s > max_s:
+                raise HTTPException(400, f"this storyboard has {shot_s} s of shots; the shared demo engine renders up "
+                                         f"to {max_s:g} s. Remove some shots, or run your own engine")
+            charged = (visitor(request), "renders", est["usd"])
+            usage.charge(*charged)
+        base = media_base(request)
         total = sum(len(sc["shots"]) for sc in sb["scenes"])
         job_id = uuid.uuid4().hex[:12]
         cancel = threading.Event()
         with jobs.lock:
-            if jobs.running:
-                raise HTTPException(409, f"a render is already running (job {jobs.running})")
-            jobs.running = job_id
+            if not is_hosted and jobs.active:
+                raise HTTPException(409, f"a render is already running (job {next(iter(jobs.active))})")
             jobs.cancels[job_id] = cancel
             jobs.jobs[job_id] = {"job_id": job_id, "status": "queued", "stage": "queued", "done": 0, "total": total,
                                  "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                 "mode": router.mode, "quality": body.quality, "estimate_usd": est["usd"]}
+                                 "mode": router.mode, "quality": quality, "estimate_usd": est["usd"],
+                                 "_charged": charged}
 
         def progress(stage: str, done: int, n: int) -> None:
             jobs.update(job_id, status="cutting" if stage == "cutting" else "rendering", stage=stage, done=done, total=n)
 
         def run() -> None:
+            if cancel.is_set():
+                jobs.update(job_id, status="failed", stage="failed", error="cancelled")
+                return
+            jobs.update(job_id, status="rendering", stage="starting")
             try:
-                entry = rs.render(sb, router, media, quality=body.quality, vertical=body.vertical,
+                entry = rs.render(sb, router, media, quality=quality, vertical=body.vertical,
                                   progress=progress, cancel=cancel)
                 jobs.update(job_id, status="done", stage="done", done=total, episode={
                     "id": entry["id"], "mp4_url": _abs(base, entry.get("file")),
@@ -339,13 +455,10 @@ def create_app(media: Path | None = None) -> FastAPI:
             except BaseException as e:  # noqa: BLE001 - the job records it
                 jobs.update(job_id, status="failed", stage="failed",
                             error="cancelled" if isinstance(e, rs.Cancelled) else f"{type(e).__name__}: {str(e)[:300]}")
-            finally:
-                with jobs.lock:
-                    if jobs.running == job_id:
-                        jobs.running = None
 
-        threading.Thread(target=run, daemon=True, name=f"render-{job_id}").start()
-        return JSONResponse({"job_id": job_id, "estimate_usd": est["usd"], "mode": router.mode}, status_code=202)
+        jobs.submit(job_id, run)
+        return JSONResponse({"job_id": job_id, "estimate_usd": est["usd"], "mode": router.mode, "quality": quality},
+                            status_code=202)
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
@@ -361,11 +474,17 @@ def create_app(media: Path | None = None) -> FastAPI:
         if not ev:
             raise HTTPException(404, f"no such job: {job_id}")
         ev.set()  # best effort: shots already sent to the Router finish; nothing new starts
+        if jobs.drop_queued(job_id):
+            with jobs.lock:
+                charged = jobs.jobs[job_id].get("_charged")
+            jobs.update(job_id, status="failed", stage="failed", error="cancelled")
+            if charged:
+                usage.refund(*charged)
         return {"cancelled": True}
 
     @app.get("/api/episodes")
     def list_episodes(request: Request) -> dict:
-        base = str(request.base_url)
+        base = media_base(request)
         items = [_episode_view(e, base) for e in episode.read_ledger(media)]
         items.sort(key=lambda e: str(e.get("finished") or e.get("created") or ""), reverse=True)
         return {"episodes": items, "auto": os.environ.get("SHOT_DIRECTOR_AUTO") == "1"}
@@ -393,6 +512,8 @@ def create_app(media: Path | None = None) -> FastAPI:
 
     @app.post("/api/news/refresh", dependencies=[SPEND])
     def refresh_news():
+        if is_hosted:
+            raise HTTPException(403, "not available on the shared demo engine")
         from . import viral
         if not viral.available():
             raise HTTPException(503, "last30days engine not installed")
@@ -404,6 +525,8 @@ def create_app(media: Path | None = None) -> FastAPI:
     # new clients use POST /api/storyboard + POST /api/render. Do not remove without checking that backend.
     @app.post("/api/episode", dependencies=[EPISODE])
     def make_episode(req: EpisodeRequest) -> dict:
+        if is_hosted:   # the legacy pipeline has no per-visitor caps: the shared engine only takes /api/render
+            raise HTTPException(403, "not available on the shared demo engine")
         try:
             return episode.produce(make_router(media), media, headline=req.headline, source=req.source,
                                    engine=req.engine, body=req.body, minutes=req.minutes,

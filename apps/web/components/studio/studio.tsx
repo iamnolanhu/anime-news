@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ENGINE_DEFAULT_URL } from "@/lib/site";
+import { ENGINE_DEFAULT_URL, HOSTED_ENGINE, HOSTED_ENGINE_URL } from "@/lib/site";
 import { createEngine, EngineError, isLoopbackUrl, normalizeEngineUrl } from "@/lib/studio/engine";
 import { KEYS, loadProjects, read, saveProjects, write } from "@/lib/studio/storage";
 import { newId, totals } from "@/lib/studio/storyboard-ops";
@@ -18,6 +18,7 @@ const HEALTH_EVERY_MS = 4000;
 function message(err: unknown, fallback: string): string {
   if (err instanceof EngineError) {
     if (err.status === 409) return "A render is already running on the engine. Wait for it, or cancel it.";
+    if (err.status === 429) return err.message || "The shared demo engine has reached today's limit. Back tomorrow, or run your own engine.";
     if (err.status === 502) return `The script writer failed: ${err.message}. Try again in a moment.`;
     return err.message || fallback;
   }
@@ -27,7 +28,9 @@ function message(err: unknown, fallback: string): string {
 export function Studio() {
   const [ready, setReady] = useState(false);
   const [mock, setMock] = useState(false);
-  const [engineUrl, setEngineUrl] = useState(ENGINE_DEFAULT_URL);
+  const [localUrl, setLocalUrl] = useState(ENGINE_DEFAULT_URL);
+  // The shared demo engine is the default when this deployment has one; the visitor can switch to their own.
+  const [useLocal, setUseLocal] = useState(!HOSTED_ENGINE);
   const [savedKey, setSavedKey] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
@@ -37,8 +40,10 @@ export function Studio() {
   const [renderError, setRenderError] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
+  const hosted = HOSTED_ENGINE && !useLocal && !mock;
+  const engineUrl = hosted ? HOSTED_ENGINE_URL : localUrl;
   const engine = useMemo(() => createEngine(engineUrl, mock), [engineUrl, mock]);
-  const canPushKey = mock || isLoopbackUrl(engineUrl);
+  const canPushKey = !hosted && (mock || isLoopbackUrl(engineUrl));
   const savedKeyRef = useRef(savedKey);
   savedKeyRef.current = savedKey;
 
@@ -46,7 +51,8 @@ export function Studio() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setMock(params.get("mock") === "1");
-    setEngineUrl(normalizeEngineUrl(read(KEYS.engineUrl) || ENGINE_DEFAULT_URL));
+    setLocalUrl(normalizeEngineUrl(read(KEYS.engineUrl) || ENGINE_DEFAULT_URL));
+    if (HOSTED_ENGINE) setUseLocal(read(KEYS.engineChoice) === "local");
     setSavedKey(read(KEYS.comfyKey) ?? "");
     const stored = loadProjects();
     setProjects(stored);
@@ -91,6 +97,8 @@ export function Studio() {
   const current = projects.find((p) => p.id === currentId) ?? null;
   const currentJob = current?.jobs.at(-1) ?? null;
   const engineUp = engineState.kind === "up";
+  const health = engineState.kind === "up" ? engineState.health : null;
+  const limits = hosted ? health?.limits : undefined;
 
   const patchProject = useCallback((id: string, fn: (p: Project) => Project) => {
     setProjects((ps) => ps.map((p) => (p.id === id ? { ...fn(p), updatedAt: Date.now() } : p)));
@@ -150,6 +158,7 @@ export function Studio() {
     setWriteError(null);
     try {
       const storyboard = await engine.storyboard(req);
+      void checkHealth();
       const now = Date.now();
       const project: Project = { id: newId("proj"), headline: req.headline, request: req, createdAt: now, updatedAt: now, storyboard, jobs: [] };
       setProjects((ps) => [project, ...ps]);
@@ -176,11 +185,20 @@ export function Studio() {
     }
   }
 
+  function chooseEngine(local: boolean) {
+    write(KEYS.engineChoice, local ? "local" : null);
+    setUseLocal(local);
+    setActiveJobId(null);
+    setWriteError(null);
+    setRenderError(null);
+  }
+
   async function render(quality: Quality, vertical: boolean) {
     if (!current) return;
     setRenderError(null);
     try {
       const jobId = await engine.render({ storyboard: current.storyboard, quality, vertical });
+      void checkHealth();
       const job: Job = { job_id: jobId, status: "queued", stage: "queued", done: 0, total: totals(current.storyboard).shots };
       patchProject(current.id, (p) => ({ ...p, jobs: [...p.jobs, job] }));
       setActiveJobId(jobId);
@@ -199,23 +217,36 @@ export function Studio() {
         <p className="kicker">Studio {mock ? "/ demo mode" : ""}</p>
         <h1 className="display mt-3 text-[clamp(3rem,8vw,5.5rem)]">Direct an episode</h1>
         <p className="mt-4 max-w-2xl text-white/75">
-          Your engine runs on your computer and does the work; this page is the remote. Write the storyboard, change anything in it, then
-          render the cut.
+          {hosted
+            ? "The shared demo engine does the work; this page is the remote. Write the storyboard, change anything in it, then render the cut."
+            : "Your engine runs on your computer and does the work; this page is the remote. Write the storyboard, change anything in it, then render the cut."}
         </p>
       </header>
 
       <EnginePanel
         url={engineUrl}
         mock={mock}
+        hosted={hosted}
+        hostedAvailable={HOSTED_ENGINE && !mock}
         state={engineState}
         onUrlChange={(url) => {
           const next = normalizeEngineUrl(url);
           write(KEYS.engineUrl, next === ENGINE_DEFAULT_URL ? null : next);
-          setEngineUrl(next);
+          setLocalUrl(next);
         }}
+        onChooseLocal={chooseEngine}
       />
-      <KeyPanel savedKey={savedKey} engineHasKey={engineUp ? Boolean(engineState.health.has_credential) : null} canPush={canPushKey} onSave={saveKey} />
-      <HeadlinePanel busy={writing && !current} error={current ? null : writeError} hasStoryboard={Boolean(current)} disabled={!engineUp} onSubmit={writeStoryboard} />
+      {hosted ? null : (
+        <KeyPanel savedKey={savedKey} engineHasKey={engineUp ? Boolean(engineState.health.has_credential) : null} canPush={canPushKey} onSave={saveKey} />
+      )}
+      <HeadlinePanel
+        busy={writing && !current}
+        error={current ? null : writeError}
+        hasStoryboard={Boolean(current)}
+        disabled={!engineUp}
+        maxMinutes={limits?.max_minutes}
+        onSubmit={writeStoryboard}
+      />
 
       {current ? (
         <>
@@ -234,6 +265,7 @@ export function Studio() {
             job={currentJob}
             error={renderError}
             disabled={!engineUp}
+            fixedQuality={limits?.quality}
             shots={totals(current.storyboard).shots}
             mediaUrl={engine.mediaUrl}
             onRender={render}

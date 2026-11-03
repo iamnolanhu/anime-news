@@ -1,13 +1,18 @@
 """FastAPI app: one process serves the API, the static UI and the generated media."""
 
 import argparse
+import hashlib
+import hmac
 import os
 import shutil
+import threading
+import time
 import uuid
+from collections import deque
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,6 +31,68 @@ app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 router = make_router(MEDIA)
 queue: list[dict] = []  # in-memory shot queue, max 3
+
+
+# -- public deploy: access token + rate limit on mutating routes ---------------------------------
+# SHOT_DIRECTOR_ACCESS_TOKEN unset (local dev): every route stays open, nothing is limited.
+# Set: POST/DELETE routes need header X-Access-Token (or ?token=), and spending routes are capped per
+# token per rolling hour so a leaked token cannot drain the shared Router pool. GET routes stay public.
+
+class AccessDenied(Exception):
+    def __init__(self, status: int, message: str):
+        self.status, self.message = status, message
+
+
+@app.exception_handler(AccessDenied)
+def _access_denied(_: Request, exc: AccessDenied) -> JSONResponse:
+    return JSONResponse({"error": exc.message, "detail": exc.message}, status_code=exc.status)
+
+
+def _limit(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+_RATE_LOCK = threading.Lock()
+_RATE_HITS: dict[tuple[str, str], deque] = {}
+
+
+def _rate_check(bucket: str, who: str, per_hour: int) -> None:
+    if per_hour <= 0:
+        return
+    now = time.monotonic()
+    with _RATE_LOCK:
+        hits = _RATE_HITS.setdefault((bucket, who), deque())
+        while hits and now - hits[0] > 3600:
+            hits.popleft()
+        if len(hits) >= per_hour:
+            wait = int(3600 - (now - hits[0])) + 1
+            raise AccessDenied(429, f"rate limit: {per_hour} {bucket} requests per hour, retry in {wait} s")
+        hits.append(now)
+
+
+def _token_gate(bucket: str | None):
+    def check(request: Request) -> None:
+        expected = os.environ.get("SHOT_DIRECTOR_ACCESS_TOKEN", "")
+        if not expected:
+            return
+        given = request.headers.get("x-access-token") or request.query_params.get("token") or ""
+        if not hmac.compare_digest(given.encode(), expected.encode()):
+            raise AccessDenied(401, "access token required")
+        if bucket:
+            who = hashlib.sha256(given.encode()).hexdigest()[:16]
+            if bucket == "episode":
+                _rate_check("episode", who, _limit("SHOT_DIRECTOR_EPISODES_PER_HOUR", 6))
+            else:
+                _rate_check("generate", who, _limit("SHOT_DIRECTOR_CALLS_PER_HOUR", 60))
+    return Depends(check)
+
+
+TOKEN = _token_gate(None)              # mutating but free (queue edits, uploads, ffmpeg stitch)
+SPEND = _token_gate("generate")        # spends Router credits: frames and shots
+EPISODE = _token_gate("episode")       # spends the most: whole episodes
 
 
 class FrameRequest(BaseModel):
@@ -54,13 +121,19 @@ def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/episodes")
+def episodes_page() -> FileResponse:
+    return FileResponse(STATIC / "episodes.html")
+
+
 @app.get("/api/presets")
 def get_presets() -> dict:
     return {**presets.as_json(), "mode": router.mode, "video_model": VIDEO_MODEL,
-            "image_model": IMAGE_MODEL, "max_shots": MAX_SHOTS, "engines": ENGINES}
+            "image_model": IMAGE_MODEL, "max_shots": MAX_SHOTS, "engines": ENGINES,
+            "access_required": bool(os.environ.get("SHOT_DIRECTOR_ACCESS_TOKEN"))}
 
 
-@app.post("/api/frame")
+@app.post("/api/frame", dependencies=[TOKEN])
 def upload_frame(file: UploadFile = File(...)) -> dict:
     ext = Path(file.filename or "frame.png").suffix.lower() or ".png"
     if ext not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -71,7 +144,7 @@ def upload_frame(file: UploadFile = File(...)) -> dict:
     return {"frame": name, "url": f"/media/{name}"}
 
 
-@app.post("/api/frame/generate")
+@app.post("/api/frame/generate", dependencies=[SPEND])
 def generate_frame(req: FrameRequest) -> dict:
     name = f"frame-{uuid.uuid4().hex[:8]}.png"
     try:
@@ -81,7 +154,7 @@ def generate_frame(req: FrameRequest) -> dict:
     return {"frame": name, "url": f"/media/{name}"}
 
 
-@app.post("/api/shot")
+@app.post("/api/shot", dependencies=[SPEND])
 def generate_shot(req: ShotRequest) -> dict:
     if len(queue) >= MAX_SHOTS:
         raise HTTPException(409, f"queue is full ({MAX_SHOTS} shots): stitch or clear it first")
@@ -118,19 +191,19 @@ def get_queue() -> dict:
     return {"shots": queue, "max_shots": MAX_SHOTS}
 
 
-@app.delete("/api/queue")
+@app.delete("/api/queue", dependencies=[TOKEN])
 def clear_queue() -> dict:
     queue.clear()
     return {"shots": queue}
 
 
-@app.delete("/api/queue/{shot_id}")
+@app.delete("/api/queue/{shot_id}", dependencies=[TOKEN])
 def remove_shot(shot_id: str) -> dict:
     queue[:] = [s for s in queue if s["id"] != shot_id]
     return {"shots": queue}
 
 
-@app.post("/api/stitch")
+@app.post("/api/stitch", dependencies=[TOKEN])
 def stitch_queue() -> dict:
     if not queue:
         raise HTTPException(400, "queue is empty: generate a shot first")
@@ -177,7 +250,7 @@ def run_episode(req: EpisodeRequest) -> dict:
         raise HTTPException(502, str(e)) from e
 
 
-@app.post("/api/episode")
+@app.post("/api/episode", dependencies=[EPISODE])
 def make_episode(req: EpisodeRequest) -> dict:
     return run_episode(req)
 

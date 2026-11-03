@@ -156,3 +156,7 @@ Live mode, 2026-11-02, one call each through `LiveRouter`: FLUX 3 image (768sq, 
 ## License
 
 MIT, see `LICENSE`.
+
+## Public deploy
+
+Live at https://your-site.example; finished episodes at https://your-site.example/episodes. Browsing is open; anything that spends Comfy Router credits needs the access token (`SHOT_DIRECTOR_ACCESS_TOKEN`, sent as `X-Access-Token`). Each token gets 6 episode requests and 60 frame or shot calls per hour (`SHOT_DIRECTOR_EPISODES_PER_HOUR`, `SHOT_DIRECTOR_CALLS_PER_HOUR`). With the variable unset (local dev) nothing changes. The public pages load PostHog (project 530416, `app: shot-director`); it never loads on localhost. Docker image, compose file, redeploy and token rotation: [deploy/README.md](deploy/README.md).

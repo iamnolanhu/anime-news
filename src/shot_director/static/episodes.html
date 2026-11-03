@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shot Director: episodes</title>
+<meta name="description" content="Shot Director turns the day's news into short anime episodes on Comfy Router. Every finished episode, newest first.">
+<style>
+  :root { --bg:#000000; --panel:#0d0d0d; --line:rgba(255,255,255,.10); --text:#ffffff; --dim:#a3a3a3; --accent:#F5C518; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:20px; letter-spacing:.5px; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .badge.mock { color:#ffd27a; border-color:#6b5420; }
+  .badge.live { color:#7ee2a8; border-color:#1f6b42; }
+  button.primary { padding:11px; border:0; border-radius:9px; background:var(--accent); color:#1a1205; font-weight:700; cursor:pointer; font-size:15px; }
+  button.ghost { padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--text); cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  #status { font-size:13px; color:var(--dim); min-height:1.4em; }
+  #status.err { color:#ff8a8a; }
+  a { color:var(--accent); }
+  .empty { padding:18px 22px; color:var(--dim); }
+</style>
+<link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/public.css">
+<script src="/static/access.js"></script>
+<script>
+/* PostHog (public deploy only; house rule: every public app ships it). Project 530416 via the
+   first-party ingest proxy analytics.example. Never loads on localhost / 127.0.0.1 (local dev stays offline). */
+if (!/^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)$/.test(location.hostname)) {
+!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+posthog.init('phc_C6ap6TySKRGuMAUeJmCQz8grn2eyEfQ7VFBbY9ksnbjK', {
+  api_host: 'https://analytics.example',
+  ui_host: 'https://us.posthog.com',
+  defaults: '2025-05-24',
+  capture_pageleave: true,
+  disable_session_recording: false,
+  session_recording: { maskAllInputs: true, maskTextSelector: '.no-record' }
+});
+posthog.register({app: "shot-director"});
+}
+</script>
+<script src="/static/vendor/anime.min.js" defer></script>
+<script src="/static/theme.js" defer></script>
+</head>
+<body>
+<canvas id="fx-particles" aria-hidden="true"></canvas>
+<header>
+  <img src="/static/logo-white.png" alt="" style="height:22px;width:22px;object-fit:contain;vertical-align:middle;margin-right:8px"><h1 class="wordmark"><span class="wm-brand">the studio</span><span class="wm-sep">//</span><span class="wm-product">Shot Director</span></h1>
+  <a class="nav-link" href="/">Studio</a>
+  <span id="access" class="badge access" hidden></span>
+  <span style="flex:1"></span>
+  <span id="status"></span>
+</header>
+<div class="gallery-head">
+  <p>The Hourly Briefing: each episode starts from a real trending headline and is written, drawn, animated, cut and scored on Comfy Router. Newest first.</p>
+  <button class="primary" id="render">Render the next episode</button>
+</div>
+<main id="episodes" class="gallery" aria-live="polite"></main>
+<div id="empty" class="empty" hidden>No finished episodes yet.</div>
+<footer class="site-foot">Built for Open Source Higgsfield · Comfy Build Night NYC · #OpenSourceHiggsfield · MIT · <a id="repo-link" href="#">repo link coming soon</a> · <a href="/">Studio</a></footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const track = (name, props) => window.access.track(name, props);
+function status(msg, err = false) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
+const when = (iso) => { try { return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return iso || ""; } };
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+let polling = null;
+
+function card(ep) {
+  const c = el("article", "ep");
+  if (ep.status === "rendering") {
+    c.classList.add("rendering");
+    c.appendChild(el("h3", null, ep.headline || ep.headline_raw || "Next episode"));
+    c.appendChild(el("div", "meta", `Rendering now (started ${when(ep.created)}). Episodes take about 10 minutes.`));
+    return c;
+  }
+  const v = document.createElement("video");
+  v.src = ep.url; v.controls = true; v.preload = "metadata"; v.playsInline = true;
+  let played = false;
+  v.addEventListener("play", () => {
+    if (played) return;
+    played = true;
+    track("episode_played", { episode_id: ep.id, file: ep.file, headline: ep.headline, engine: ep.engine });
+  });
+  c.appendChild(v);
+  const h = el("h3");
+  if (ep.link) { const a = el("a", null, ep.headline || ep.headline_raw); a.href = ep.link; a.target = "_blank"; a.rel = "noopener"; h.appendChild(a); }
+  else h.textContent = ep.headline || ep.headline_raw;
+  c.appendChild(h);
+  if (ep.logline) c.appendChild(el("p", "logline", ep.logline));
+  const cut = ep.cut || {};
+  const bits = [when(ep.finished || ep.created), ep.source,
+    cut.duration ? `${Math.round(cut.duration)} s` : null, cut.shots ? `${cut.shots} shots` : null,
+    ep.engine, ep.seconds_to_render ? `rendered in ${Math.round(ep.seconds_to_render / 60)} min` : null].filter(Boolean);
+  c.appendChild(el("div", "meta", bits.join(" · ")));
+  return c;
+}
+
+async function load() {
+  const j = await (await fetch("/api/episodes")).json();
+  const list = (j.episodes || []).filter((e) => (e.status === "done" && e.url) || e.status === "rendering");
+  list.sort((a, b) => String(b.finished || b.created || "").localeCompare(String(a.finished || a.created || "")));
+  const root = $("episodes");
+  root.replaceChildren(...list.map(card));
+  $("empty").hidden = list.length > 0;
+  const busy = list.some((e) => e.status === "rendering");
+  if (busy && !polling) polling = setInterval(() => load().catch(() => {}), 20000);
+  if (!busy && polling) { clearInterval(polling); polling = null; }
+}
+
+$("render").onclick = async () => {
+  const btn = $("render");
+  btn.disabled = true;
+  status("Requesting an episode (about 10 minutes when live)...");
+  track("episode_requested", { from: "gallery" });
+  try {
+    const started = Date.now();
+    setTimeout(() => load().catch(() => {}), 3000);
+    const r = await window.access.fetch("/api/episode", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || j.detail || r.statusText);
+    const cut = j.cut || {};
+    track("episode_rendered", { duration_s: cut.duration || null, shots: cut.shots || (j.shots || []).length,
+      engine: ((j.shots || [])[0] || {}).engine || null, seconds: Math.round((Date.now() - started) / 1000) });
+    status("Episode ready.");
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    btn.disabled = false;
+    load().catch(() => {});
+  }
+};
+
+load().catch((e) => status(e.message, true));
+</script>
+</body>
+</html>

@@ -42,6 +42,7 @@ BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
 BURST_COUNT = 4
 CRT_SEG = (0.5, 0.8)       # CRT monitor insert used as a transition
 SHARP_GATE = 0.4           # skip clip segments whose sharpness < 40 % of the clip's median
+SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
 ACTION_WORDS = ("action", "chase", "fight", "escalat", "montage", "burst", "battle", "attack", "clash", "run")
 FONT_CANDIDATES = [
     os.environ.get("SHOT_DIRECTOR_FONT", ""),
@@ -209,7 +210,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 s.extra["src_dur"] = lens[j]
                 sh = seg_sharpness(clip, starts[j], lens[j])
                 s.extra["sharp"], s.extra["sharp_median"] = round(sh, 1), round(med, 1)
-                s.extra["passes_gate"] = sh >= SHARP_GATE * med
+                s.extra["passes_gate"] = sh >= max(SHARP_GATE * med, SHARP_FLOOR)
                 candidates.append((sh, s))
         # sharpness gate applies to every window, the opener included; drop smeared windows
         for sh, s in candidates:
@@ -493,6 +494,8 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple
         if not p:
             continue
         sc = item.get("scene", -1)
+        if sc is not None and sc >= 0 and sc not in scene_start:
+            continue  # the scene was skipped by the gate: its narration is dropped, never played over another scene
         at = float(item["at"]) if item.get("at") is not None else (
             0.15 if sc is None or sc < 0 else scene_start.get(sc, 0.0) + 0.1)
         inputs += ["-i", p]

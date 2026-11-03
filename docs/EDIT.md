@@ -111,3 +111,5 @@ openapi example; `SHOT_DIRECTOR_VOICE` overrides it.
 
 
 **Gate exception (explicit):** a scene whose clip windows all fail the sharpness gate opens on its stills and the smeared clip is dropped. A scene with no stills whose windows all fail is skipped entirely (logged); in the episode pipeline every scene carries its start frame as a still, so this only drops scenes in hand-built plans. The gate is absolute: no smeared opener ever ships.
+
+**Absolute floor:** a window must also exceed `SHARP_FLOOR` (Laplacian variance 250) regardless of its clip's median, so a mostly-smeared clip cannot pass its own low bar. Narration belonging to a skipped scene is dropped.

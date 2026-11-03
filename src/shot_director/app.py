@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -231,13 +232,30 @@ class EpisodeRequest(BaseModel):
 
 
 @app.get("/api/news")
-def get_news(strategy: str | None = None) -> dict:
-    if (strategy or "").lower() == "viral":  # opt-in here: a cold viral fetch takes about 2 minutes
+def get_news(strategy: str | None = None):
+    """Public. strategy=viral serves ONLY the 30-minute viral cache and never starts the engine (a cold
+    fetch is minutes of multi-process search); cold -> 202 with no items. POST /api/news/refresh warms it."""
+    if (strategy or "").lower() == "viral":
         from . import viral
-        items = viral.viral_stories(limit=10)
-        if items:
-            return {"items": items, "strategy": "viral"}
+        hit = viral.cached(limit=10)
+        if hit is None:
+            return JSONResponse({"items": [], "strategy": "viral", "cached": False, "fetched_at": None,
+                                 "refreshing": viral.refreshing()}, status_code=202)
+        fetched = datetime.fromtimestamp(hit["fetched"], timezone.utc).isoformat(timespec="seconds")
+        return {"items": hit["items"], "strategy": "viral", "cached": True, "fetched_at": fetched,
+                "refreshing": viral.refreshing()}
     return {"items": news.trending(10), "strategy": "headline"}
+
+
+@app.post("/api/news/refresh", dependencies=[SPEND])
+def refresh_news():
+    """Token-gated and rate-limited like other spending routes; single flight: 409 while a fetch runs."""
+    from . import viral
+    if not viral.available():
+        raise HTTPException(503, "last30days engine not installed")
+    if not viral.start_refresh():
+        raise HTTPException(409, "a viral refresh is already running")
+    return JSONResponse({"refreshing": True}, status_code=202)
 
 
 def run_episode(req: EpisodeRequest) -> dict:

@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -222,22 +223,38 @@ def _fresh(item: dict, hours: int) -> bool:
     return ts is not None and ts >= datetime.now(timezone.utc) - timedelta(hours=hours)
 
 
-def viral_stories(topics: list[str] | None = None, hours: int = 48, limit: int = 10) -> list[dict]:
-    """Most-engaged non-somber stories across `topics` from the last `hours`, deduped, engagement desc.
-    Cached for 30 minutes in media/viral-cache.json. [] when the engine is missing or fails."""
-    if not available():
-        _log("last30days not found (set SHOT_DIRECTOR_LAST30DAYS / SHOT_DIRECTOR_LAST30DAYS_PYTHON); no viral stories")
-        return []
-    topics = _topics(topics)
-    key = {"topics": topics, "hours": hours}
-    cache = _cache_path()
+_RUN_LOCK = threading.Lock()  # single flight: at most one engine fetch per process
+
+
+def refreshing() -> bool:
+    """True while an engine fetch is running."""
+    return _RUN_LOCK.locked()
+
+
+def _key(topics: list[str], hours: int) -> dict:
+    return {"topics": topics, "hours": hours}
+
+
+def _read_cache(key: dict) -> dict | None:
     try:
-        cached = json.loads(cache.read_text())
+        cached = json.loads(_cache_path().read_text())
         if cached.get("key") == key and time.time() - cached.get("fetched", 0) < CACHE_SECONDS:
-            return [it for it in cached.get("items", [])
-                    if not _somber(it["title"]) and _fresh(it, hours)][:limit]
+            return cached
     except (OSError, ValueError, AttributeError):
         pass
+    return None
+
+
+def _select(items: list[dict], hours: int, exclude: set[str] | None, limit: int) -> list[dict]:
+    """Exclusions, somber and freshness filters run BEFORE the limit, so a long exclude list never hides
+    an eligible story further down."""
+    exclude = exclude or set()
+    return [it for it in items if it["title"] not in exclude and not _somber(it["title"])
+            and _fresh(it, hours)][:limit]
+
+
+def _fetch(topics: list[str], hours: int) -> list[dict]:
+    """Run the engine for every topic, rank and dedupe, write the cache. Caller holds _RUN_LOCK."""
     days = max(1, -(-hours // 24))
     errors: list[str] = []
 
@@ -266,8 +283,59 @@ def viral_stories(topics: list[str] | None = None, hours: int = 48, limit: int =
              + (f", first: {errors[0]}" if errors else "") + ")")
         return []
     try:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"key": key, "fetched": time.time(), "items": kept}, indent=1))
+        _cache_path().parent.mkdir(parents=True, exist_ok=True)
+        _cache_path().write_text(json.dumps({"key": _key(topics, hours), "fetched": time.time(),
+                                             "items": kept}, indent=1))
     except OSError:
         pass
-    return kept[:limit]
+    return kept
+
+
+def cached(topics: list[str] | None = None, hours: int = 48, limit: int = 10) -> dict | None:
+    """The warm cache only, never the engine: {items, fetched (epoch s)} or None when cold or disabled.
+    This is what the public GET /api/news?strategy=viral serves."""
+    if not available():
+        return None
+    hit = _read_cache(_key(_topics(topics), hours))
+    if not hit:
+        return None
+    return {"items": _select(hit.get("items", []), hours, None, limit), "fetched": hit["fetched"]}
+
+
+def start_refresh(topics: list[str] | None = None, hours: int = 48) -> bool:
+    """Start one engine fetch in a background thread. False when one is already running (single flight)
+    or the engine is not installed. For the token-gated POST /api/news/refresh."""
+    if not available() or not _RUN_LOCK.acquire(blocking=False):
+        return False
+    topics = _topics(topics)
+
+    def run() -> None:
+        try:
+            _fetch(topics, hours)
+        except Exception as e:
+            _log(f"refresh failed: {type(e).__name__}: {e}"[:200])
+        finally:
+            _RUN_LOCK.release()
+
+    threading.Thread(target=run, name="viral-refresh", daemon=True).start()
+    return True
+
+
+def viral_stories(topics: list[str] | None = None, hours: int = 48, limit: int = 10,
+                  exclude: set[str] | None = None) -> list[dict]:
+    """Most-engaged non-somber stories across `topics` from the last `hours` that are not in `exclude`,
+    deduped, engagement desc. Serves the 30-minute cache (media/viral-cache.json) when warm; otherwise
+    runs the engine, waiting for any fetch already in flight instead of starting a second one.
+    [] when the engine is missing or fails. For the token-gated episode pick, not public routes."""
+    if not available():
+        _log("last30days not found (set SHOT_DIRECTOR_LAST30DAYS / SHOT_DIRECTOR_LAST30DAYS_PYTHON); no viral stories")
+        return []
+    topics = _topics(topics)
+    key = _key(topics, hours)
+    hit = _read_cache(key)
+    if hit:
+        return _select(hit.get("items", []), hours, exclude, limit)
+    with _RUN_LOCK:
+        hit = _read_cache(key)  # a fetch that finished while we waited
+        items = hit.get("items", []) if hit else _fetch(topics, hours)
+    return _select(items, hours, exclude, limit)

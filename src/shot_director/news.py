@@ -132,4 +132,5 @@ def _viral_top(exclude: set[str] | None, strategy: str | None) -> dict | None:
     if news_strategy(strategy) != "viral":
         return None
     from . import viral
-    return next((it for it in viral.viral_stories(limit=20) if it["title"] not in (exclude or set())), None)
+    picks = viral.viral_stories(limit=1, exclude=exclude)  # exclusions apply before the limit
+    return picks[0] if picks else None

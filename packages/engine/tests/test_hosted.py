@@ -392,3 +392,39 @@ def test_writer_failure_with_no_billed_call_is_refunded(tmp_path, monkeypatch):
     assert r.status_code == 502 and "writer failed" in r.json()["detail"] and len(calls) == 1
     h = c.get("/api/health", headers=AUTH).json()
     assert h["storyboards_left_for_you"] == 9 and h["budget_remaining_usd"] == 40.0   # refunded
+
+
+# -- a cancelled reservation is refunded only against the day it was charged ---------------------------
+
+def test_cancel_after_midnight_does_not_refund_yesterday_into_today(tmp_path, monkeypatch):
+    day = {"now": "2026-11-02"}
+    monkeypatch.setattr(hosted.Usage, "_today", staticmethod(lambda: day["now"]))
+    monkeypatch.setenv("ANIME_NEWS_MAX_PARALLEL_JOBS", "1")
+    monkeypatch.setattr(rs, "estimate", lambda *a, **k: {"usd": 5.0, "parts": {}})
+    gate = threading.Event()
+    monkeypatch.setattr(rs, "render", lambda *a, **k: gate.wait(10) and (_ for _ in ()).throw(RuntimeError("x")))
+    c = client(tmp_path)
+    sb = storyboard(c)
+    try:
+        first, queued = (c.post("/api/render", json={"storyboard": sb}, headers=AUTH).json()["job_id"] for _ in range(2))
+        assert c.get(f"/api/jobs/{queued}", headers=AUTH).json()["status"] == "queued"
+        day["now"] = "2026-11-03"                       # UTC midnight passes while the job waits
+        storyboard(c)                                    # today's spend: one writer call
+        today = c.get("/api/health", headers=AUTH).json()
+        assert today["budget_remaining_usd"] == 39.9 and today["remaining_for_you"] == 3
+        assert c.delete(f"/api/jobs/{queued}", headers=AUTH).json() == {"cancelled": True}
+        after = c.get("/api/health", headers=AUTH).json()
+        assert after["budget_remaining_usd"] == 39.9 and after["remaining_for_you"] == 3   # today untouched
+        assert after["storyboards_left_for_you"] == today["storyboards_left_for_you"]
+    finally:
+        gate.set()
+
+
+def test_same_day_cancel_still_refunds(tmp_path, monkeypatch):
+    monkeypatch.setattr(hosted.Usage, "_today", staticmethod(lambda: "2026-11-02"))
+    u = hosted.Usage(tmp_path)
+    day = u.charge("203.0.113.7", "renders", 5.0)
+    assert day == "2026-11-02" and u.summary("203.0.113.7")["budget_remaining_usd"] == 35.0
+    u.refund("203.0.113.7", "renders", 5.0, day)
+    assert u.summary("203.0.113.7") == {"renders_left_for_you": 3, "storyboards_left_for_you": 9,
+                                         "budget_remaining_usd": 40.0}

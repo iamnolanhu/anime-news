@@ -121,9 +121,9 @@ class Usage:
         tmp.write_text(json.dumps(doc, indent=1))
         tmp.replace(self.path)
 
-    def charge(self, ip: str, kind: str, usd: float) -> None:
+    def charge(self, ip: str, kind: str, usd: float) -> str:
         """Count one `kind` ("renders" or "storyboards") for this IP and add `usd` to today's spend, or raise
-        LimitReached without changing anything."""
+        LimitReached without changing anything. Returns the UTC day charged: pass it to refund()."""
         lim = limits()
         cap = lim["renders_per_ip_per_day"] if kind == "renders" else lim["storyboards_per_ip_per_day"]
         with self.lock:
@@ -140,11 +140,15 @@ class Usage:
             doc[kind][who] = used + 1
             doc["spent_usd"] = round(float(doc["spent_usd"]) + usd, 4)
             self._save(doc)
+            return doc["day"]
 
-    def refund(self, ip: str, kind: str, usd: float) -> None:
-        """Undo a charge whose work never started (writer failed, queued render cancelled)."""
+    def refund(self, ip: str, kind: str, usd: float, day: str | None = None) -> None:
+        """Undo a charge whose work never started (writer failed, queued render cancelled). `day` is what charge()
+        returned: a reservation from a day that has since rolled over is not refunded against today's budget."""
         with self.lock:
             doc = self._load()
+            if day is not None and day != doc["day"]:
+                return
             who = self._who(ip)
             if doc[kind].get(who):
                 doc[kind][who] = int(doc[kind][who]) - 1

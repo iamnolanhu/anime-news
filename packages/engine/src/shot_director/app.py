@@ -385,7 +385,7 @@ def create_app(media: Path | None = None) -> FastAPI:
             lim = hosted.limits()
             minutes = min(minutes, lim["max_minutes"])
             charged = (visitor(request), "storyboards", lim["writer_usd"])
-            usage.charge(*charged)
+            charged = (*charged, usage.charge(*charged))   # + the day it was charged, for a refund
         from . import writer
         paid0 = writer.paid_calls()   # per thread: this request's writer calls only
 
@@ -427,7 +427,7 @@ def create_app(media: Path | None = None) -> FastAPI:
                 raise HTTPException(400, f"this storyboard has {shot_s} s of shots; the shared demo engine renders up "
                                          f"to {max_s:g} s. Remove some shots, or run your own engine")
             charged = (visitor(request), "renders", est["usd"])
-            usage.charge(*charged)
+            charged = (*charged, usage.charge(*charged))   # + the day it was charged, for a refund
         base = media_base(request)
         total = sum(len(sc["shots"]) for sc in sb["scenes"])
         job_id = uuid.uuid4().hex[:12]

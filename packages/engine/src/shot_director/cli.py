@@ -134,8 +134,9 @@ def _render_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--out", help="media dir (default ~/.anime-news/media or ANIME_NEWS_MEDIA)")
     p.add_argument("--parallel", type=int, default=SHOT_PARALLEL, help="shots rendered at once")
     p.add_argument("--max-cost", type=float, default=None,
-                   help="stop before spending if the USD estimate is over this (live only)")
-    p.add_argument("--estimate-only", action="store_true", help="print the spend estimate and stop")
+                   help="stop before rendering if the USD estimate is over this (live only). `make` and `storyboard` still "
+                        "spend the one writer call (about $0.10) that produces the storyboard the estimate is made from")
+    p.add_argument("--estimate-only", action="store_true", help="print the render spend estimate and stop (after the writer call, for make)")
     p.add_argument("--mock", action="store_true", help="offline placeholder render, no Router calls")
 
 

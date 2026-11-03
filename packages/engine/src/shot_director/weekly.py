@@ -630,9 +630,12 @@ def _render_fields(entry: dict) -> dict:
 # -- one week -----------------------------------------------------------------------------------------
 
 def plan_week(week: str, media: Path, minutes: float = 1.0, quality: str = "480p", mock: bool | None = None,
-              refresh: bool = False, use_google: bool = True, use_viral: bool = False, fetch=None) -> dict:
-    """Sources + storyboard + meta (status "planned" unless the week already rendered). Nothing is rendered."""
-    picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral, fetch=fetch)
+              refresh: bool = False, use_google: bool = True, use_viral: bool = False, fetch=None,
+              picks: list[dict] | None = None) -> dict:
+    """Sources + storyboard + meta (status "planned" unless the week already rendered). Nothing is rendered.
+    `picks`: the week's headlines when the caller already has them (no second source lookup)."""
+    if picks is None:
+        picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral, fetch=fetch)
     sb = make_storyboard(week, picks, minutes, mock)
     wdir = week_dir(media, week)
     est = estimate_usd(sb, quality, Path(media))
@@ -721,6 +724,14 @@ def print_plan(plan: dict, out=None) -> None:
     print(f"  cold open: {plan['storyboard']['headline']}", file=out)
 
 
+def _writer_spend(writer, before: int | None) -> float:
+    """USD of the writer calls billed on this thread since `before` (None: the writer was not used)."""
+    if before is None:
+        return 0.0
+    from . import render_storyboard as rs
+    return (writer.paid_calls() - before) * rs.PRICE["writer"]
+
+
 def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, quality: str = "480p",
         plan_only: bool = False, retry: bool = False, budget_usd: float = DEFAULT_BUDGET_USD, force: bool = False,
         do_publish: bool = False, refresh: bool = False, use_google: bool = True, use_viral: bool = False,
@@ -731,8 +742,9 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
     media = Path(media)
     spent, results = 0.0, []
     live = router is not None and router.mode == "live"
-    from . import render_storyboard as rs
+    from . import render_storyboard as rs, writer
     for week in weeks:
+        writer0 = None  # the writer's paid-call count before this week's (live) storyboard, to count a failed one
         at_risk = 0.0   # USD this week may already have spent if it fails part-way (counted on failure, live only)
         if not allow_unfinished and not finished(week):
             print(f"{week}: not over yet, skipped", file=out)
@@ -756,9 +768,23 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                     print(f"{week}: done, skipped", file=out)
                     results.append({"week": week, "status": "skipped", "reason": "done"})
                     continue
+                picks = None
+                if live and not plan_only:
+                    # check the budget BEFORE the paid writer call: the plan-only template has the same shape and
+                    # shot count, and its total is the render estimate plus the writer call
+                    picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral)
+                    need = estimate_usd(make_storyboard(week, picks, minutes, mock=True), quality, media)["total_usd"]
+                    if spent + need > budget_usd:
+                        print(f"{week}: budget stop before the writer (spent ${spent:.2f}, this week about "
+                              f"${need:.2f}, budget ${budget_usd:.2f})", file=out)
+                        results.append({"week": week, "status": "budget_stop"})
+                        _ledger(media, {"week": week, "action": "budget_stop", "spent": round(spent, 2)})
+                        break
+                    writer0 = writer.paid_calls()
                 # plan-only never calls the writer: the template storyboard has the same shape and shot count
                 plan = plan_week(week, media, minutes, quality, mock=plan_only or not live, refresh=refresh,
-                                 use_google=use_google, use_viral=use_viral)
+                                 use_google=use_google, use_viral=use_viral, picks=picks)
+                writer_usd = _writer_spend(writer, writer0)
                 print_plan(plan, out)
                 if plan_only:
                     results.append({"week": week, "status": "planned", "estimate": plan["estimate"]["total_usd"]})
@@ -766,7 +792,8 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                                     "headlines": [p["headline"] for p in plan["picks"]]})
                     continue
                 est = plan["estimate"]["total_usd"]
-                if live and spent + est > budget_usd:
+                if live and spent + est > budget_usd:   # the written storyboard came out longer than the template
+                    spent += writer_usd                  # the writer call is already spent
                     print(f"{week}: budget stop (spent ${spent:.2f}, this week ${est:.2f}, budget ${budget_usd:.2f})",
                           file=out)
                     results.append({"week": week, "status": "budget_stop"})
@@ -790,6 +817,8 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
             # a render that failed part-way has spent part of its estimate: count all of it, so the budget holds
             # (credits_used is in credits, not dollars). A cost-cap refusal happens before any spend.
             cost = at_risk if live and not isinstance(e, rs.CostCapExceeded) else 0.0
+            if live and not at_risk:             # failed while writing the storyboard: count the billed writer calls
+                cost = _writer_spend(writer, writer0)
             spent += cost
             print(f"{week}: FAILED {type(e).__name__}: {e}"[:300], file=out)
             results.append({"week": week, "status": "failed", "error": f"{type(e).__name__}: {e}"[:300], "cost": cost})

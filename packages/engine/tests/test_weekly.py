@@ -212,7 +212,13 @@ def live_batch(tmp_path, monkeypatch):
     picks, _ = W.headlines("2026-W44", tmp_path / "src", use_google=False, fetch=fake_fetch)
     monkeypatch.setattr(W, "headlines", lambda *a, **k: (picks, {}))
     real = W.make_storyboard
-    monkeypatch.setattr(W, "make_storyboard", lambda week, p, minutes=1.0, mock=None: real(week, p, minutes, True))
+    monkeypatch.setattr(W, "WRITES", [], raising=False)
+
+    def make_storyboard(week, p, minutes=1.0, mock=None):
+        if mock is False:
+            W.WRITES.append(week)                        # where the paid writer call would happen
+        return real(week, p, minutes, True)
+    monkeypatch.setattr(W, "make_storyboard", make_storyboard)
     sb = real("2026-W44", picks, 1.0, True)
     return W.estimate_usd(sb, "480p", tmp_path)["total_usd"]
 
@@ -231,3 +237,36 @@ def test_failed_week_counts_toward_the_batch_budget(tmp_path, monkeypatch):
     assert [w["status"] for w in res["weeks"]] == ["failed", "failed", "budget_stop"]
     assert len(attempts) == 2 and res["spent_usd"] == round(est * 2, 2)
     assert attempts == [pytest.approx(est * 2.5), pytest.approx(est * 1.5)]   # the 2nd cap excludes the 1st week
+
+
+def test_budget_is_checked_before_the_paid_writer_call(tmp_path, monkeypatch):
+    from shot_director import render_storyboard as rs
+    est = live_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(rs, "render", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no render")))
+    res = W.run(["2026-W40"], tmp_path, router=LiveStub(), budget_usd=est * 0.9, allow_unfinished=True,
+                out=open("/dev/null", "w"))
+    assert [w["status"] for w in res["weeks"]] == ["budget_stop"] and W.WRITES == [] and res["spent_usd"] == 0
+
+
+def test_budget_that_fits_one_week_writes_one_storyboard(tmp_path, monkeypatch):
+    from shot_director import render_storyboard as rs
+    est = live_batch(tmp_path, monkeypatch)
+    monkeypatch.setattr(rs, "render", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("render failed")))
+    res = W.run(["2026-W40", "2026-W41"], tmp_path, router=LiveStub(), budget_usd=est * 1.5,
+                allow_unfinished=True, out=open("/dev/null", "w"))
+    assert [w["status"] for w in res["weeks"]] == ["failed", "budget_stop"] and W.WRITES == ["2026-W40"]
+
+
+def test_a_failed_writer_counts_its_billed_calls(tmp_path, monkeypatch):
+    from shot_director import render_storyboard as rs, writer
+    est = live_batch(tmp_path, monkeypatch)
+
+    def bad_writer(week, p, minutes=1.0, mock=None):
+        writer._count_paid()
+        writer._count_paid()                             # two billed replies, both rejected
+        raise S.StoryboardError("weekly writer failed: bad JSON")
+    monkeypatch.setattr(W, "make_storyboard", lambda week, p, minutes=1.0, mock=None:
+                        bad_writer(week, p) if mock is False else S.weekly_template(W.segments_of(p), minutes))
+    res = W.run(["2026-W40"], tmp_path, router=LiveStub(), budget_usd=est * 3, allow_unfinished=True,
+                out=open("/dev/null", "w"))
+    assert res["weeks"][0]["status"] == "failed" and res["spent_usd"] == round(2 * rs.PRICE["writer"], 2)

@@ -44,6 +44,7 @@ BURST_MIN = 3              # this many consecutive short shots of distinct compo
 STILL_HOLD = 1.9           # a still holds (PsyopAnime stills average 1.9 s), with one Ken Burns move
 STILL_MAX = 6.0            # ... and up to this long when a line needs the time
 HEADLINE_S = 2.5           # a scene's headline lower-third holds this long, in a stretch with no voice
+HEADLINE_MIN = 1.2         # ... and is moved to a later quiet stretch, or dropped, rather than shown for less
 EXTEND_SOFT = 2.5          # a line that needs more picture first grows every shot of its run up to this
 TALK_HOLD_MAX = 4.0        # a talk take longer than this lends part of its line to the next (or previous) shots
 TALK_HOLD_MIN = 2.0        # ... but holds at least this long on the speaker
@@ -56,6 +57,7 @@ ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never
 MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
 COUNTDOWN_RED = "0xFF2A2A"
 CLOCK = re.compile(r"\d+:\d\d")
+CLOCK_WORDS = re.compile(r"\b(clock|timer|countdown)s?\b", re.I)   # a shot whose prompt draws its own clock
 BED_VOLUME = 0.8
 BED_QUIET = 0.35           # the bed's level through the cold open; it builds to full by the last third (PsyopAnime)
 TRUE_PEAK = -1.0           # dBTP ceiling of the delivered file, measured after the AAC encode
@@ -322,14 +324,16 @@ def speech_gaps(clip: str) -> list[float]:
 
 
 def clause_marks(line: str, a0: float, a1: float, gaps: list[float]) -> list[float]:
-    """Source times of the clause boundaries of a spoken line over [a0, a1]: placed by word count, then snapped to
-    the nearest real pause of the take within 0.5 s when there is one."""
+    """Where a cut may fall inside a spoken line (R12): the clause boundaries of the line, placed by word count over
+    [a0, a1], each kept only when a real pause of the take lies within 0.5 s, and moved onto that pause. A take with no
+    pause near a clause boundary (or no sound) gives none, so its picture is never cut while it speaks."""
     words = [len(c.split()) for c in split_clauses(line)] if line else []
     out = []
     for i in range(1, len(words)):
         m = a0 + (a1 - a0) * sum(words[:i]) / max(1, sum(words))
         near = [g for g in gaps if abs(g - m) <= 0.5 and a0 < g < a1]
-        out.append(min(near, key=lambda g: abs(g - m)) if near else m)
+        if near:
+            out.append(min(near, key=lambda g: abs(g - m)))
     return sorted(set(out))
 
 
@@ -407,6 +411,20 @@ def _fit_exact(tail: list[dict], target: float, fps: int) -> list[float] | None:
     return [n / fps for n in lens] if need == 0 else None
 
 
+def _hold_last(run: list[dict], target: float, fps: int) -> None:
+    """A line is never cut off (R13): when its run cannot grow to `target` s, the run's last still holds as long as it
+    takes, or, with no still, its last shot holds its last frame (`freeze`)."""
+    short = target - sum(sh["len"] + sh.get("freeze", 0.0) for sh in run)
+    if short <= 1e-6:
+        return
+    short = math.ceil(short * fps - 1e-6) / fps
+    still = next((sh for sh in reversed(run) if sh["kind"] == "still"), None)
+    if still is not None:
+        still["len"] += short
+    else:
+        run[-1]["freeze"] = run[-1].get("freeze", 0.0) + short
+
+
 def _run_max(run: list[dict], fps: int) -> float:
     return sum(STILL_MAX if sh["kind"] == "still" else max(sh["len"], max_len(sh["src"], sh["start"], sh["b"], fps))
                for sh in run)
@@ -446,7 +464,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     for si, scene in enumerate(plan.get("scenes", [])):
         shots: list[dict] = []
         for it in _scene_items(scene, resolve):
-            p = it["path"]
+            p, clock = it["path"], bool(CLOCK_WORDS.search(str(it.get("prompt") or "")))
             if p in used:
                 log.warning("scene %d: %s is already in the cut, skipped", si, Path(p).name)
                 continue
@@ -455,7 +473,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 if dur > 0.5:
                     used.add(p)
                     shots.append({"kind": "talk", "clip": p, "a0": 0.15, "a1": 0.15 + int((dur - 0.25) * fps) / fps,
-                                  "line": it.get("line") or "", "p0": 0.15, "p1": 0.15 + int((dur - 0.25) * fps) / fps})
+                                  "line": it.get("line") or "", "p0": 0.15, "p1": 0.15 + int((dur - 0.25) * fps) / fps,
+                                  "clock": clock})
             elif it["kind"] == "action":
                 if _duration(p) <= 0.5:
                     continue
@@ -463,11 +482,12 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 src = source(p)
                 for k, (a, b) in enumerate(src.angles()):
                     if pick_window(src, a, b, ACTION_HOLD, fps):
-                        shots.append({"kind": "clip", "src": src, "angle": k, "a": a, "b": b})
+                        shots.append({"kind": "clip", "src": src, "angle": k, "a": a, "b": b, "clock": clock})
                     else:
                         gated.append({"src": p, "angle": k, "gate": round(src.gate_at(a), 1)})
             else:
-                shots.append({"kind": "still", "path": p, "len": STILL_HOLD, "fallback_for": it.get("fallback_for")})
+                shots.append({"kind": "still", "path": p, "len": STILL_HOLD, "fallback_for": it.get("fallback_for"),
+                              "clock": clock})
         shown = {sh["src"].path for sh in shots if sh["kind"] == "clip"}
         shots = [sh for sh in shots if sh["kind"] != "still" or not sh.get("fallback_for") or sh["fallback_for"] not in shown]
         if not shots:
@@ -540,8 +560,9 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             got = _extend(run, lead + 0.1 + nd + 0.15, fps) - lead
             _first_at_least(run, lead + 0.95, fps)
             if got < 0.1 + nd + 0.15 - 1e-6:
-                log.warning("scene %d: narration %.2fs does not fit its pictures (%.2fs)", si, nd, got)
-            voices.append({"kind": "narration", "path": narr, "start": 0.0, "dur": min(nd, got - 0.25),
+                log.warning("scene %d: narration %.2fs outlasts its pictures (%.2fs): the last one holds", si, nd, got)
+                _hold_last(run, lead + 0.1 + nd + 0.2, fps)
+            voices.append({"kind": "narration", "path": narr, "start": 0.0, "dur": nd,
                            "file_dur": nd, "text": scene.get("narration") or "", "anchor": run[0],
                            "offset": lead + 0.1})
             hosted.add(id(runs[0]))
@@ -598,12 +619,17 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
                 elif sh["kind"] == "clip":
                     seg = Seg("clip", frames(sh["len"]), src=sh["src"].path, start=sh["start"], scene=si)
                     seg.extra.update(src_dur=seg.frames / fps, angle=sh["angle"])
+                    if sh.get("freeze"):   # its last frame holds while a line finishes
+                        seg.extra["freeze"] = round(sh["freeze"], 4)
+                        seg.frames += round(sh["freeze"] * fps)
                     if sh.get("burst"):
                         seg.extra["burst"] = True
                 else:
                     n_still += 1
                     seg = Seg("still", frames(sh["len"]), src=sh["path"], scene=si,
                               motion=("push", "shake", "pull")[(n_still - 1 + si) % 3])
+                if sh.get("clock"):
+                    seg.extra["clock"] = True   # draws its own clock: no countdown overlay on it
                 sh["seg"] = seg
                 body.append(seg)
         for v in voices + headlines:   # anchors that are shot records become their segments
@@ -624,8 +650,8 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if not p or (sc is not None and sc >= 0 and sc not in starts):
             continue   # the scene was skipped by the gate: its line is dropped, never played over another scene
         at = float(item["at"]) if item.get("at") is not None else (starts[sc] + 0.1 if sc is not None and sc >= 0 else 0.15)
-        nd, nxt = _duration(p), min([st for st in starts.values() if st > at + 0.2] + [t])
-        voices.append({"kind": "narration", "path": p, "start": 0.0, "dur": min(nd, max(0.3, nxt - at - 0.1)),
+        nd = _duration(p)
+        voices.append({"kind": "narration", "path": p, "start": 0.0, "dur": nd,   # never trimmed (R13)
                        "file_dur": nd, "text": item.get("text") or "", "at": round(at, 4)})
     for v in voices:
         if "anchor" in v:
@@ -634,7 +660,7 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     for h in headlines:
         h["at"], h["dur"] = round(h.pop("anchor").at, 4), HEADLINE_S
     _captions(segs, voices, fps)
-    _headlines(segs, headlines, fps)
+    _headlines(segs, headlines, voices, fps)
     _countdown(plan, segs, fps)
     plan_segments.gated = gated
     plan_segments.voice = voices
@@ -664,19 +690,44 @@ def _captions(segs: list[Seg], voices: list[dict], fps: int) -> None:
             del s.extra["cues"]
 
 
-def _headlines(segs: list[Seg], headlines: list[dict], fps: int) -> None:
-    """Each headline lower-third onto the segments it spans, in subtitle style (`extra["headline"]`)."""
+def _headlines(segs: list[Seg], headlines: list[dict], voices: list[dict], fps: int) -> None:
+    """Each headline lower-third onto the segments it spans, in subtitle style (`extra["headline"]`). It never meets a
+    voice: it ends at the earlier of HEADLINE_S and 0.1 s before the next line starts, inside its scene; under
+    HEADLINE_MIN it moves to the scene's next quiet stretch (0.1 s after a line ends), and with none it is dropped."""
+    speech = sorted((v["at"], v["at"] + v["dur"]) for v in voices)
+    kept = []
     for h in headlines:
+        body = [s for s in segs if s.scene == h["scene"]]
+        hi = body[-1].at + body[-1].frames / fps
+
+        def end_from(at: float) -> float | None:
+            if any(a - 1e-6 <= at < b for a, b in speech):
+                return None
+            return min(at + HEADLINE_S, min([a for a, _ in speech if a > at] + [hi + 0.1]) - 0.1, hi)
+
+        at, end = h["at"], end_from(h["at"])
+        if end is None or end - at < HEADLINE_MIN - 1e-6:
+            later = [(t, end_from(t)) for t in sorted({b + 0.1 for _, b in speech if h["at"] < b + 0.1 < hi})]
+            later = [(t, e) for t, e in later if e is not None and e - t >= HEADLINE_MIN - 1e-6]
+            if not later:
+                log.warning("scene %d: no %.1fs without a voice for the headline %r, dropped", h["scene"], HEADLINE_MIN,
+                            h["text"])
+                continue
+            at, end = later[0]
+        h["at"], h["dur"] = round(at, 4), round(end - at, 4)
+        kept.append(h)
         for s in segs:
             d = s.frames / fps
-            if s.kind in ("clip", "still") and h["at"] + h["dur"] > s.at + 1e-3 and h["at"] < s.at + d - 1e-3:
+            if s.kind in ("clip", "still") and end > s.at + 1e-3 and at < s.at + d - 1e-3:
                 s.extra.setdefault("headline", []).append(
-                    (h["text"], round(max(0.0, h["at"] - s.at), 3), round(min(d, h["at"] + h["dur"] - s.at), 3)))
+                    (h["text"], round(max(0.0, at - s.at), 3), round(min(d, end - s.at), 3)))
+    headlines[:] = kept
 
 
 def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:
     """The countdown overlay, only when the plan asks for one: over the last run of non-talk shots of the first scene
-    with that beat, running down to 00:00 exactly at the run's end. No subtitle states a time under it (R18)."""
+    with that beat, running down to 00:00 exactly at the run's end. One clock on screen (R18): a shot whose prompt
+    draws a clock, timer or countdown gets no overlay, and no subtitle under the overlay states a time."""
     cd = plan.get("countdown")
     if not cd:
         return
@@ -694,6 +745,8 @@ def _countdown(plan: dict, segs: list[Seg], fps: int) -> None:
             continue
         total = sum(s.frames for s in run) / fps
         for s in run:
+            if s.extra.get("clock"):
+                continue
             s.extra["countdown"] = {"label": cd.get("label", ""), "total": round(total, 3),
                                     "offset": round(s.at - run[0].at, 4)}
             if s.extra.get("cues"):
@@ -709,7 +762,7 @@ def reuse_report(timeline: list[dict], fps: int) -> dict:
     stills: list[str] = []
     for s in timeline:
         if s["kind"] == "clip" and s["src"]:
-            shown = s["extra"]["src_dur"] if s["extra"].get("ramp") else s["frames"] / fps / s["speed"]
+            shown = s["extra"].get("src_dur", s["frames"] / fps / s["speed"])
             spans.setdefault(s["src"], []).append((s["start"], s["start"] + shown))
         elif s["kind"] == "still":
             stills.append(s["src"])
@@ -809,10 +862,14 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
     mark = _wordmark(font, workdir, H, wordmark_text(plan))
     cap = _caption_filter(s, font, workdir, idx, H) + mark + _countdown_filter(s, workdir, idx, H)
     if s.kind == "clip":
+        # exactly the window's frames, then its last frame cloned for a freeze (never source past the window, which
+        # could cross the angle's cut); subtitles are drawn after, so they keep changing during a freeze
         src_dur = s.extra.get("src_dur", s.frames / fps / s.speed)
-        vf = f"{fit},setpts={s.speed}*(PTS-STARTPTS),fps={fps}"
+        win = round(src_dur * s.speed * fps)
+        vf = (f"{fit},setpts={s.speed}*(PTS-STARTPTS),fps={fps},trim=end_frame={win},"
+              f"tpad=stop_mode=clone:stop_duration={s.extra.get('freeze', 0.0) + 1:.3f}")
         cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{s.start:.3f}", "-t", f"{src_dur + 0.25:.3f}",
-               "-i", s.src, "-vf", vf + cap + ",tpad=stop_mode=clone:stop_duration=1"] + enc
+               "-i", s.src, "-vf", vf + cap] + enc
     elif s.kind == "still":
         big = f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,crop={W * 2}:{H * 2},setsar=1"
         if s.motion == "shake":

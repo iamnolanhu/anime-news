@@ -254,3 +254,109 @@ def test_weekly_segment_scenes_carry_their_headline():
               "clip": None, "error": None} for sc in sb["scenes"] for s in sc["shots"]]
     plan = R.edit_plan(sb, shots, Path("/m"))
     assert [x.get("headline") for x in plan["scenes"]] == [None, "Robots learn to nap"]
+
+
+def test_a_line_longer_than_its_pictures_is_never_cut_off(media, tmp_path):
+    """R13 when the run cannot grow enough: the run's last still holds as long as it takes; with no still, the last
+    shot freezes on its last frame until the line ends plus 0.2 s. The voice is never trimmed."""
+    _ff("-f", "lavfi", "-i", "sine=f=300:d=9:sample_rate=48000", str(tmp_path / "long9.wav"))
+    _ff("-f", "lavfi", "-i", "sine=f=300:d=7:sample_rate=48000", str(tmp_path / "long7.wav"))
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "narration": "One long line.", "narration_audio": str(tmp_path / "long9.wav"),
+         "shots": [{"kind": "still", "path": str(media / "still1.png")}]},
+        {"beat": "turn", "narration": "Another long line.", "narration_audio": str(tmp_path / "long7.wav"),
+         "shots": [{"kind": "action", "clip": str(media / "k.mp4")}]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert [abs(v["played"] - v["file_dur"]) < 0.05 for v in report["voice"]] == [True, True]
+    for v in report["voice"]:   # each line ends, plus 0.2 s, inside its own scene's pictures
+        sc = next(x["scene"] for x in _shots(report) if x["at"] <= v["at"] < x["at"] + x["frames"] / FPS)
+        scene_end = max(x["at"] + x["frames"] / FPS for x in _shots(report) if x["scene"] == sc)
+        assert scene_end >= v["at"] + v["file_dur"] + 0.2 - 1e-3, v
+    still = next(s for s in _shots(report) if s["scene"] == 0)
+    assert still["frames"] / FPS > edit.STILL_MAX                         # the still held past its usual cap
+    last = [s for s in _shots(report) if s["scene"] == 1][-1]
+    assert last["extra"]["freeze"] > 0 and last["extra"]["src_dur"] < last["frames"] / FPS   # the last frame holds
+    assert report["reuse"]["overlapping_windows"] == 0 and metrics(report)["straddle"] == 0
+    out = edit.assemble({**plan, "scenes": plan["scenes"][1:]}, tmp_path / "freeze.mp4", audio=True, base=media)
+    rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+    got = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
+                               capture_output=True, text=True).stdout)
+    assert abs(got - rep["duration"]) < 0.1 and rep["voice"][0]["played"] == rep["voice"][0]["file_dur"]
+
+
+def test_no_pause_in_a_take_means_no_cut_while_it_speaks(media, tmp_path):
+    """A talk picture is cut only on a real pause found in the take's sound, at least 2 s in; a take that speaks
+    without a pause (or has no sound) holds whole, with no L- or J-cut."""
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6,hue=h=30",
+        "-f", "lavfi", "-i", "aevalsrc='0.4*sin(2*PI*220*t)*between(t,0.3,5.7)':s=48000:d=6",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tmp_path / "nopause.mp4"))
+    _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=6,hue=h=60", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        str(tmp_path / "silent.mp4"))
+    assert edit.clause_marks(LINE1, 0.15, 5.9, edit.speech_gaps(str(tmp_path / "nopause.mp4"))) == []
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "thesis", "shots": [{"kind": "talk", "clip": str(tmp_path / "nopause.mp4"), "line": LINE1},
+                                     {"kind": "action", "clip": str(media / "a.mp4")}]},
+        {"beat": "vignette", "shots": [{"kind": "action", "clip": str(media / "b.mp4")},
+                                       {"kind": "talk", "clip": str(tmp_path / "silent.mp4"), "line": LINE3}]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    talk = [s for s in segs if s.extra.get("talk")]
+    assert len(talk) == 2
+    for s in talk:   # whole: 0.15 s to the end minus 0.1 s
+        assert abs(s.start - 0.15) < 1e-6 and abs(s.frames / FPS - 5.75) < 1 / FPS
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert metrics(report)["cut_in_line"] == 0
+
+
+def test_a_headline_never_runs_onto_a_talk_take(media, tmp_path):
+    """The headline ends 0.1 s before the next line (at most 2.5 s); under 1.2 s it moves to the scene's next quiet
+    stretch; with none it is dropped."""
+    for name, d in (("w2", 2.1), ("w1a", 1.1), ("w1b", 1.1)):
+        _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d={d}", "-pix_fmt", "yuv420p", str(tmp_path / f"{name}.mp4"))
+    for name in ("ta", "tb", "tc"):   # 3.5 s takes: under TALK_HOLD_MAX, so they hold whole
+        _ff("-f", "lavfi", "-i", f"testsrc2=s=320x180:r={FPS}:d=3.5,hue=h=120",
+            "-f", "lavfi", "-i", "aevalsrc='0.4*sin(2*PI*220*t)':s=48000:d=3.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(tmp_path / f"{name}.mp4"))
+    talk = lambda n: {"kind": "talk", "clip": str(tmp_path / f"{n}.mp4"), "line": "A short line here."}   # noqa: E731
+    act = lambda n: {"kind": "action", "clip": str(tmp_path / f"{n}.mp4")}                             # noqa: E731
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "headline": "Shortened", "shots": [act("w2"), talk("ta")]},
+        {"beat": "turn", "headline": "Moved", "shots": [act("w1a"), talk("tb"), {"kind": "still", "path": str(media / "still2.png")}]},
+        {"beat": "climax", "headline": "Dropped", "shots": [act("w1b"), talk("tc")]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    heads = {h["text"]: h for h in report["headlines"]}
+    assert set(heads) == {"Shortened", "Moved"}
+    voice = {next(s["scene"] for s in _shots(report) if s["extra"].get("talk") and abs(s["at"] - v["at"]) < 0.5): v
+             for v in report["voice"]}
+    short = heads["Shortened"]
+    assert 1.2 <= short["dur"] < 2.5 and abs(short["at"] + short["dur"] - (voice[0]["at"] - 0.1)) < 1e-3
+    moved = heads["Moved"]
+    assert moved["at"] >= voice[1]["at"] + voice[1]["played"] + 0.1 - 1e-3 and moved["dur"] >= 1.2
+    for h in heads.values():
+        for v in report["voice"]:
+            assert v["at"] >= h["at"] + h["dur"] + 0.1 - 1e-3 or v["at"] + v["played"] <= h["at"] - 0.1 + 1e-3, (h, v)
+    assert not any(c[0] == "Dropped" for s in _shots(report) for c in s["extra"].get("headline", []))
+
+
+def test_writers_never_draw_clocks_and_the_overlay_skips_shots_that_do(media, tmp_path):
+    """One clock on screen: both writer prompts forbid clocks, timers, countdowns and numbers in frames (the overlay
+    carries the countdown), the template storyboards draw none, and a shot whose prompt still draws one gets no
+    overlay."""
+    from shot_director import writer
+    rule = "Never draw clocks, timers, countdowns or on-screen numbers in frames: the overlay carries the countdown."
+    assert writer.NO_CLOCKS == rule
+    for prompt in (writer.SYSTEM_PROMPT_V2, S.SYSTEM_PROMPT):
+        assert rule in prompt
+        for stale in ("visible ticking clock", "countdown clock appears", "document or countdown", "a ticker, the countdown"):
+            assert stale not in prompt
+    segs = [{"topic": t, "headline": f"{t} story", "source_text": ""} for t in ("ai", "tech")]
+    for sb in (S.template("Mayor bans Mondays", minutes=1), S.weekly_template(segs, minutes=1)):
+        assert not [s["prompt"] for sc in sb["scenes"] for s in sc["shots"] if edit.CLOCK_WORDS.search(s["prompt"])]
+    act = lambda n, prompt: {"kind": "action", "clip": str(media / f"{n}.mp4"), "prompt": prompt}   # noqa: E731
+    plan = {"fps": FPS, "size": [320, 180], "countdown": {"label": "LAUNCH IN", "scene_beat": "escalation"},
+            "scenes": [{"beat": "escalation", "shots": [act("a", "Wide shot of traders sprinting with buckets"),
+                                                        act("b", "Close-up of a giant red countdown clock hitting zero")]}]}
+    plan_segs = edit.plan_segments(plan, tmp_path, media)
+    over = {(Path(s.src).stem, bool(s.extra.get("countdown"))) for s in plan_segs if s.kind == "clip"}
+    assert over == {("a", True), ("b", False)}

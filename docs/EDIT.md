@@ -47,8 +47,8 @@ with `"at": null` plays on every storyboard scene change and on the end card.
 
 ## Cutting rules
 
-0. **Every source moment is on screen at most once.** Each clip angle is shown once, each still once, and no freeze
-   frames are taken from clips. `cuts.json` `reuse` recounts it from the final timeline: `overlapping_windows` and
+0. **Every source moment is on screen at most once.** Each clip angle is shown once and each still once. The only
+   held frame is rule 8's last resort. `cuts.json` `reuse` recounts it from the final timeline: `overlapping_windows` and
    `still_repeats` must be 0.
 1. **A clip is cut by its angles, never across one (R4).** Seedance action clips carry a hidden "Hard cut to:"
    second angle. Each clip is decoded once at 160x90; a frame whose ffmpeg scene score is over 0.25, or a spike of at
@@ -73,12 +73,15 @@ with `"at": null` plays on every storyboard scene change and on the end card.
 7. **Talk takes hold (R11, R12).** A take is one framing, nearly whole (0.15 s to its end minus 0.1 s), never
    punched into after the fact. A take over 4 s holds 2-3.7 s on the speaker and lends the rest of its line to the
    scene's next pictures (L-cut), or, when it ends the scene, opens its line under the previous pictures (J-cut).
-   The cut falls on a clause boundary, placed by word count and snapped to the nearest real pause in the take's
-   sound within 0.5 s (ffmpeg silencedetect, -32 dB for 0.12 s). A J-cut's voice starts on a cut of the previous run,
+   The cut falls only on a real pause in the take's sound (ffmpeg silencedetect, -32 dB for 0.12 s) that lies within
+   0.5 s of a clause boundary (placed by word count) and at least 2 s from the cut-away end; a take with no such pause,
+   or no sound, holds whole. A J-cut's voice starts on a cut of the previous run,
    and no cut falls in a line's first 0.8 s. The take's sound always plays whole.
 8. **Lines are never cut off (R13).** A scene's narration plays in full over its first run of pictures; the run
-   grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s.
-   A narration that still does not fit is logged, and `voice` shows `played` shorter than `file_dur`.
+   grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s. When
+   that is still too short, the run's last still holds as long as it takes, or, with no still, its last shot holds its
+   last frame (`extra.freeze`), until the line ends plus 0.2 s. A voice is never trimmed: `voice` `played` always
+   equals `file_dur`. Free-standing `narration` lines also play in full.
 9. **Sharpness gate.** For every candidate window, the first, middle and last frames are scored (Laplacian
    variance of the 160x90 grayscale frame, pure Python). A window must reach 40 % of its angle's median (10
    samples; each angle is its own shot, so a soft close-up is not judged against a sharp wide) and never less than
@@ -91,11 +94,15 @@ with `"at": null` plays on every storyboard scene change and on the end card.
     not drawn.
 11. **Headline lower-third.** A scene with a `headline` shows it once, in the subtitle style, for 2.5 s on its first
     run of pictures (at the scene's start, or right after an opening talk take). No voice plays under it: that run
-    lends no time to a talk take, and the scene's narration starts on the next cut after it (or once it is off).
+    lends no time to a talk take, and the scene's narration starts on the next cut after it (or once it is off). It
+    ends at the earlier of 2.5 s and 0.1 s before the next line starts (and inside its scene); if that leaves under
+    1.2 s it moves to the scene's next quiet stretch (0.1 s after a line ends), and with none it is dropped (logged).
 12. **Countdown** (only when the plan has `countdown`; `render_storyboard` sets it only when the storyboard names a
     label): a big red (#FF2A2A) monospace `00:SS` top-right, its label above, over the last run of pictures of the
-    first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. No subtitle under
-    it states a time (R18).
+    first scene with that beat, reaching `00:00` at the run's end; the last second flashes white. One clock on screen
+    (R18): a shot whose prompt mentions a clock, timer or countdown gets no overlay (both edit plans pass each shot's
+    prompt), and no subtitle under the overlay states a time. The writers are told never to draw clocks, timers,
+    countdowns or numbers in frames (`writer.NO_CLOCKS`, in the script and storyboard prompts).
 13. **Wordmark:** the plan's `title` (the series), small and gold, top-left, after the 28 px gold cube mark
     (`static/brand/an-mark-small.png`, overlaid with ffmpeg), on every frame. `SHOT_DIRECTOR_WORDMARK` overrides the
     text (empty = none), `SHOT_DIRECTOR_WORDMARK_MARK` the mark; a missing mark file is skipped.

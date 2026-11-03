@@ -228,3 +228,153 @@ def script_to_prompts(script: dict, body: str = "anime") -> list[str]:
         for s in sc["shots"]:
             out.append(f"{lead}. {s['visual'].rstrip('.')}. Setting: {setting}. {SAFETY_TAIL}.")
     return out
+
+
+# -- v2: a story with a recurring cast, spoken lines and acts (docs/psyopanime-pipeline-v2.md, D2) ----------
+
+CAST = {
+    "anchor": {"name": "KUROGANE", "role": "the Anchor",
+               "look": "a stern middle-aged news anchor with a short silver crew cut, round glasses, a black "
+                       "blazer with gold trim and a PRESS badge",
+               "trait": "unshakeable gravitas; reads every absurd fact like a declaration of war"},
+    "operative": {"name": "VEX", "role": "the Field Operative",
+                  "look": "a young woman with a sharp black bob, mirrored aviator sunglasses, an earpiece and a "
+                          "long beige trench coat",
+                  "trait": "treats every story like a covert mission; whispers into her wrist"},
+    "analyst": {"name": "DR. HAKASE", "role": "the Analyst",
+                "look": "a gaunt sleep-deprived man with wild grey hair, dark eye bags, a rumpled lab coat and a "
+                        "chipped mug that says DO NOT PANIC, a red-string evidence board behind him",
+                "trait": "has connected everything to everything; panics in a whisper"},
+}
+SPEAKERS = tuple(CAST)
+LINE_MAX_WORDS = 14
+
+SYSTEM_PROMPT_V2 = """You are the head writer of "{series}", an original 2D anime news show (late-1980s OVA look) that turns one real headline into a 60-second mini-episode people share.
+
+THE SHOW
+- Deadpan war-room gravitas applied to an absurd or mundane claim. The characters never wink; the joke is the contrast.
+- Literalize the headline: its abstract claim becomes an oversized physical prop or situation (a market "falling" is a giant chart arrow crashing through a ceiling).
+- Every episode is a tiny STORY, not a list: a hook, a claim, an escalation with a visible ticking clock or counter, a genre-pastiche vignette that dramatizes the moral (western standoff, samurai duel, heist, kaiju attack, sports final...), then a twist and a button.
+
+RECURRING CAST (original characters; use their NAMES in lines and visuals)
+{cast}
+Running gag every episode: a big red countdown clock that reaches zero and something tiny and anticlimactic happens.
+
+ACT STRUCTURE (fixed; the user message gives the exact shot slots)
+1. cold_open: image only, NO words, no captions. A mysterious, gorgeous hook that makes you need the next shot.
+2. thesis: KUROGANE states the headline as a grave briefing line, then a literal visual.
+3. escalation: VEX reports from the field, the countdown clock appears, things get bigger and dumber.
+4. vignette: a genre pastiche dramatizes the moral; DR. HAKASE explains the conspiracy in one line.
+5. button: KUROGANE's twist line, ending EXACTLY with "Back in one hour."
+{callback}
+WRITING RULES
+- Spoken lines: <= {max_words} words, one or two short sentences, punchy, quotable, no stage directions inside the line. Each line must be funny on its own as a subtitle.
+- Visuals: drawn-anime terms only. Start with the shot size (extreme close-up, close-up, medium, wide, overhead, low angle). Talk shots frame the speaker clearly facing camera, mouth visible. Action shots: one strong subject, one clear motion verb, impact frames, speed lines, debris, wind, light.
+- second_angle: for action shots only, a DIFFERENT composition of the same moment after a hard cut (e.g. close-up of a reaction, an insert of the prop). Empty for talk shots.
+- Captions: talk shots: the caption is the line itself. Action shots: "" or <= 6 words of on-screen text (a stamp, a ticker, the countdown).
+- Never depict, describe or name a real person. Refer to people in the headline only by role ("the official"). Invented countries and institutions only. No real logos or flags. Safe for work: no weapons pointed at people, no gore. Never name an anime studio, film or artist. Never photoreal, cinematic, 4K or lens terms.
+
+OUTPUT: ONE JSON object, nothing else:
+{{"logline": "one-sentence pitch",
+  "title_card": "episode title, <= 30 chars, ALL CAPS",
+  "countdown": "the clock's label, <= 24 chars, e.g. NAP MANDATE IN",
+  "acts": [{{"act": "cold_open|thesis|escalation|vignette|button", "setting": "<= 20 words, drawn-anime terms",
+             "shots": [{{"kind": "talk|action", "speaker": "anchor|operative|analyst|none", "line": "spoken words or empty",
+                         "visual": "<= 30 words", "second_angle": "<= 20 words or empty",
+                         "move": "one of: {moves}", "caption": "see rules"}}]}}]}}"""
+
+USER_PROMPT_V2 = """Headline: "{headline}"
+Source: {source}
+Vignette genre for this episode: {genre} (dramatize the moral as that genre; not a western unless the genre says so).
+Shot slots, in order (act: kind/speaker per shot). Match them EXACTLY, same number of acts and shots, same kinds and speakers:
+{slots}
+Return the JSON object only."""
+
+
+def _cast_block() -> str:
+    return "\n".join(f"- {c['name']} ({c['role']}, speaker id \"{k}\"): {c['look']}; {c['trait']}."
+                     for k, c in CAST.items())
+
+
+def validate_v2(script: object, slots: list[tuple[str, list[tuple[str, str]]]]) -> dict:
+    """Raise ValueError unless acts/shots/kinds/speakers match `slots`; returns a normalized copy."""
+    if not isinstance(script, dict):
+        raise ValueError("script is not an object")
+    for k in ("logline", "title_card", "countdown", "acts"):
+        if k not in script:
+            raise ValueError(f"missing key: {k}")
+    acts = script["acts"]
+    if not isinstance(acts, list) or len(acts) != len(slots):
+        raise ValueError(f"expected {len(slots)} acts")
+    out_acts = []
+    for i, (a, (act_name, want)) in enumerate(zip(acts, slots), 1):
+        shots = a.get("shots") if isinstance(a, dict) else None
+        if not isinstance(shots, list) or len(shots) != len(want):
+            raise ValueError(f"act {i}: expected {len(want)} shots")
+        out_shots = []
+        for j, (s, (kind, speaker)) in enumerate(zip(shots, want), 1):
+            if not isinstance(s, dict) or s.get("move") not in MOVES:
+                raise ValueError(f"act {i} shot {j}: bad move")
+            if not str(s.get("visual", "")).strip():
+                raise ValueError(f"act {i} shot {j}: empty visual")
+            line = " ".join(str(s.get("line") or "").split())
+            if kind == "talk":
+                if not line:
+                    raise ValueError(f"act {i} shot {j}: talk shot without a line")
+                words = line.split()
+                line = " ".join(words[:LINE_MAX_WORDS + 4])
+            else:
+                line = ""
+            out_shots.append({"kind": kind, "speaker": speaker if kind == "talk" else "none", "line": line,
+                              "visual": " ".join(str(s["visual"]).split()[:40]),
+                              "second_angle": "" if kind == "talk" else " ".join(str(s.get("second_angle") or "").split()[:25]),
+                              "move": s["move"],
+                              "caption": line if kind == "talk" else ("" if act_name == "cold_open"
+                                                                      else _clip(s.get("caption") or "", CAPTION_MAX))})
+        out_acts.append({"act": act_name, "setting": " ".join(str(a.get("setting", "")).split()), "shots": out_shots})
+    last = out_acts[-1]["shots"][-1]
+    if last["kind"] == "talk":   # check the untrimmed line, so a long line is not cut mid-phrase and re-tagged
+        full = " ".join(str(acts[-1]["shots"][-1].get("line") or "").split())
+        if full.rstrip(".! ").lower().endswith("back in one hour"):
+            last["line"] = last["caption"] = full
+    if last["kind"] == "talk" and not last["line"].rstrip(".! ").lower().endswith("back in one hour"):
+        last["line"] = last["caption"] = f"{last['line'].rstrip()} Back in one hour."
+    return {"logline": " ".join(str(script["logline"]).split()),
+            "title_card": _clip(str(script["title_card"]).upper(), 30),
+            "countdown": _clip(str(script["countdown"]).upper(), 24), "acts": out_acts}
+
+
+def write_script_v2(headline: str, source: str, slots: list[tuple[str, list[tuple[str, str]]]],
+                    series_title: str = "THE HOURLY BRIEFING", *, previous: dict | None = None,
+                    genre: str = "heist movie", media_dir: Path | None = None,
+                    model: str = CHAT_MODEL) -> dict | None:
+    """Headline -> validated v2 script (acts of talk/action shots with spoken lines), or None on any failure.
+    `previous` = {"logline", "title_card"} of the last episode, for the callback rule. Cached like v1."""
+    headline = " ".join((headline or "").split())
+    if not headline:
+        return None
+    cache = _media_dir(media_dir) / CACHE_NAME
+    key = "v2:" + _cache_key(f"{headline}|{genre}", len(slots))
+    cached = _read_cache(cache).get(key)
+    if cached:
+        try:
+            return {**cached, **validate_v2(cached, slots)}
+        except ValueError:
+            pass
+    callback = (f"CALLBACK: the previous episode was \"{previous.get('title_card', '')}\" "
+                f"({previous.get('logline', '')}). Reference it once, in a line or a background detail.\n"
+                if previous else "")
+    system = SYSTEM_PROMPT_V2.format(series=series_title, cast=_cast_block(), callback=callback,
+                                     max_words=LINE_MAX_WORDS, moves=", ".join(MOVES))
+    slot_text = "\n".join(f"{i}. {act}: " + ", ".join(f"{k}/{sp}" for k, sp in shots)
+                          for i, (act, shots) in enumerate(slots, 1))
+    user = USER_PROMPT_V2.format(headline=headline.replace('"', "'"), source=source or "unknown", slots=slot_text,
+                                 genre=genre)
+    try:
+        script = validate_v2(json.loads(_strip_fences(_chat(system, user, model))), slots)
+    except Exception as e:
+        print(f"[shot-director] writer v2 failed: {type(e).__name__}: {str(e)[:300]}", file=sys.stderr, flush=True)
+        return None
+    script.update(headline=headline, source=source, series=series_title, model=model)
+    _write_cache(cache, key, script)
+    return script

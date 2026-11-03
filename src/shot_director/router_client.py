@@ -32,7 +32,10 @@ ENGINES = [
      "best_for": "Fastest (≈30 s). Text-only, ignores the frame. Good for previews/establishing shots."},
     {"id": "minimax/minimax-h3", "label": "MiniMax H3", "time": "~5 min",
      "best_for": "Slow (≈5 min). Takes the frame, returns sound. Good for a hero shot with audio."},
+    {"id": "byteplus/dreamina-seedance-2-5-260628", "label": "Seedance 2.5", "time": "~1.5 min",
+     "best_for": "Talking shots: quoted dialogue in the prompt is spoken with moving lips; returns sound."},
 ]
+SEEDANCE_MODEL = "byteplus/dreamina-seedance-2-5-260628"
 CONTINUATION_ENGINE = "bfl/flux-3-video"
 IMAGE_MODEL = os.environ.get("SHOT_DIRECTOR_IMAGE_MODEL", "bfl/flux-3-image")
 SECRETS_FILE = Path.home() / ".claude/.secrets/services/comfy/default.env"
@@ -53,6 +56,10 @@ FLUX_VIDEO_ASPECT_RATIO = "16:9"
 MINIMAX_DURATION = 4               # minimax-h3: 4-15 s
 MINIMAX_RESOLUTION = "768P"        # 768P | 2K
 MINIMAX_RATIO = "16:9"             # required (not adaptive) when there is no first frame
+SEEDANCE_TIMEOUT_SECONDS = 1500
+SEEDANCE_RESOLUTION = os.environ.get("SHOT_DIRECTOR_SEEDANCE_RESOLUTION", "480p")  # 480p | 720p | 1080p
+# 480p keeps a 5 s clip near $0.74 (Router bills $15.30 per 1M tokens, tokens = s * w * h * fps / 1024);
+# 720p is 2.25x that. The cut upscales to 1280x720.
 
 
 def clamp_duration(model: str | None, seconds: int | None) -> int:
@@ -63,6 +70,8 @@ def clamp_duration(model: str | None, seconds: int | None) -> int:
         return min(LTX_ALLOWED, key=lambda d: abs(d - seconds)) if seconds else LTX_DURATION
     if model == "minimax/minimax-h3":
         return max(4, min(15, seconds)) if seconds else MINIMAX_DURATION
+    if model == SEEDANCE_MODEL:
+        return max(4, min(30, seconds)) if seconds else 5
     return max(5, min(20, seconds)) if seconds else FLUX_VIDEO_DURATION
 
 
@@ -139,12 +148,12 @@ class LiveRouter:
             msg = msg.get("message") or json.dumps(msg)
         return f"{doc.get('error_type')}: {msg or json.dumps(doc)[:400]}"
 
-    def _run_model(self, model: str, body: dict) -> dict:
+    def _run_model(self, model: str, body: dict, timeout: float = TIMEOUT_SECONDS) -> dict:
         base = f"{BASE_URL}/v2/models/{model}/requests"
         rid = self._req("POST", base, body).get("request_id")
         if not rid:
             raise RouterError("Router returned no request_id")
-        deadline = time.time() + TIMEOUT_SECONDS
+        deadline = time.time() + timeout
         while time.time() < deadline:
             _, hdrs, status = self._req_full("GET", f"{base}/{rid}/status")
             if status.get("error_type"):
@@ -203,9 +212,29 @@ class LiveRouter:
 
     def generate_clip(self, prompt: str, body: str, move: str, out: Path,
                       frame: Path | None = None, model: str | None = None,
-                      previous_clip: Path | None = None, duration: int | None = None) -> Path:
+                      previous_clip: Path | None = None, duration: int | None = None,
+                      voice_ref: Path | None = None) -> Path:
+        """`voice_ref` (Seedance only): an audio sample whose voice the spoken lines take on."""
         model = model or VIDEO_MODEL
-        if model.startswith("ltx/"):
+        if model == SEEDANCE_MODEL:
+            # Seedance 2.5 renders picture and sound in one pass; quoted dialogue in the prompt is spoken
+            # with lip movement. A voice reference cannot be combined with role first_frame (invalid_input),
+            # so with a voice the frame goes in as reference_image (it still opens on that composition).
+            content: list[dict] = [{"type": "text", "text": prompt}]
+            if frame is not None:
+                content.append({"type": "image_url", "role": "reference_image" if voice_ref else "first_frame",
+                                "image_url": {"url": _data_uri(frame, "image/png")}})
+            if voice_ref is not None:
+                content.append({"type": "audio_url", "role": "reference_audio",
+                                "audio_url": {"url": _data_uri(voice_ref, "audio/mpeg")}})
+            req = {"content": content, "duration": clamp_duration(model, duration), "generate_audio": True,
+                   "resolution": SEEDANCE_RESOLUTION, "ratio": "adaptive" if frame is not None else "16:9"}
+            result = self._run_model(model, req, timeout=SEEDANCE_TIMEOUT_SECONDS)  # 720p under load ran past 11 min
+            # seedance output: {"status": succeeded|failed, "content": {"video_url"}, "error": {...}}
+            if str(result.get("status", "")).lower() in {"failed", "cancelled", "expired"}:
+                raise RouterError(f"Seedance job {result.get('status')}: {result.get('error')}")
+            url = self._dig(result, "content", "video_url")
+        elif model.startswith("ltx/"):
             if frame is not None and not self._warned_ltx_frame:
                 print(f"[shot-director] {model} is text-to-video only on Router: start frame ignored",
                       file=sys.stderr)
@@ -273,13 +302,16 @@ class MockRouter:
 
     def generate_clip(self, prompt: str, body: str, move: str, out: Path,
                       frame: Path | None = None, model: str | None = None,
-                      previous_clip: Path | None = None, duration: int | None = None) -> Path:
+                      previous_clip: Path | None = None, duration: int | None = None,
+                      voice_ref: Path | None = None) -> Path:
         from .presets import CAMERA_BODIES, CAMERA_MOVES
         color = CAMERA_BODIES.get(body, CAMERA_BODIES["modern"])["color"]
         title = f"MOCK {CAMERA_MOVES[move]['label'].upper()}"
         sub = f"{CAMERA_BODIES[body]['label']} - {model or VIDEO_MODEL}"
-        return stitch.mock_clip(title, sub, color, out, frame=frame,
-                                seconds=float(duration) if duration else 2.0)
+        stitch.mock_clip(title, sub, color, out, frame=frame, seconds=float(duration) if duration else 2.0)
+        if model == SEEDANCE_MODEL:  # Seedance clips carry their own sound: a tone stands in for the speech
+            stitch.add_mock_tone(out)
+        return out
 
 
 def make_router(media_dir: Path):

@@ -1,10 +1,12 @@
 """Anime-paced cut: turn generated clips + stills into a fast, captioned, scored edit with ffmpeg only.
 
-`assemble(plan, out)` -> out. Rules (see docs/EDIT.md, tuned to docs/psyopanime-formula.md): every clip
-is chopped into 2-3 segments of 1.3-2.1 s from different parts of the clip (0.33 s bursts in action
-beats), stills become 0.8-1.2 s Ken Burns / shake cutaways, cold open = title over the strongest frame,
-each scene opens on its strongest frame, 2-frame white flash on beats, 1-frame black on hard beats,
-an occasional CRT-monitor insert as a transition, one speed ramp per scene, yellow-on-dark subtitles
+`assemble(plan, out)` -> out. Rules (see docs/EDIT.md, tuned to docs/psyopanime-formula.md): every source
+moment is on screen at most once (clip windows of one file never overlap, each still is used once, no
+freeze frames). Every clip is chopped into up to 3 disjoint windows of 1.45-2.5 s (0.33 s bursts in action
+beats, from still-unused source), stills become 0.9-1.3 s Ken Burns / shake cutaways, cold open = title over
+the strongest frame, each scene opens on its strongest window, 2-frame white flash on beats, 1-frame black
+on hard beats, every other scene opens on one of its own windows in a CRT monitor, one speed ramp per
+scene, yellow-on-dark subtitles
 one clause per cut, a small gold wordmark top-left, end card. Audio: narration,
 ducked music bed, SFX hits on scene changes, loudnorm; a silent track when nothing is given.
 No generation happens here; audio.py makes the sound files.
@@ -14,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import random
 import shutil
@@ -27,7 +30,7 @@ from pathlib import Path
 log = logging.getLogger("shot_director.edit")
 
 GOLD = "0xF5C518"
-END_CARD_TEXT = "ANIME NEWS · open source · #OpenSourceHiggsfield"
+END_CARD_TEXT = os.environ.get("SHOT_DIRECTOR_END_CARD", "ANIME NEWS · open source · #OpenSourceHiggsfield")
 WORDMARK = os.environ.get("SHOT_DIRECTOR_WORDMARK", "ANIME NEWS")
 # Brand mark drawn before the wordmark (~28 px at 720p; an-mark-small.png has strokes weighted for small sizes). Optional: a missing file or an empty
 # SHOT_DIRECTOR_WORDMARK_MARK skips the mark and the cut still renders.
@@ -37,12 +40,18 @@ TITLE_FRAMES_S = 1.25
 END_FRAMES_S = 1.6
 CLIP_SEG = (1.6, 2.5)      # output seconds of a clip segment (formula: avg shot 1.3-1.8 s, never > 2.5)
 CLIP_SEG_MIN = 1.2
+CLIP_WIN_MIN = 1.45       # a clip holds as many disjoint windows of >= this as fit (5 s -> 3)
+MAX_WINDOWS = 3
 STILL_SEG = (0.9, 1.3)     # output seconds of a still cutaway
 BURST_FRAMES = 8           # 0.33 s shots in action-beat bursts
 BURST_COUNT = 4
 CRT_SEG = (0.5, 0.8)       # CRT monitor insert used as a transition
 SHARP_GATE = 0.4           # skip clip segments whose sharpness < 40 % of the clip's median
 SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
+TALK_WIN = (1.6, 3.0)      # a talk take is shown nearly whole, in 2-3 abutting windows of this length
+TALK_PUNCH = 1.3           # punch-in crop on alternate talk windows
+COUNTDOWN_RED = "0xFF2A2A"
+BED_VOLUME = 0.8
 ACTION_WORDS = ("action", "chase", "fight", "escalat", "montage", "burst", "battle", "attack", "clash", "run")
 FONT_CANDIDATES = [
     os.environ.get("SHOT_DIRECTOR_FONT", ""),
@@ -51,6 +60,13 @@ FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+]
+MONO_FONT_CANDIDATES = [
+    os.environ.get("SHOT_DIRECTOR_MONO_FONT", ""),
+    "/System/Library/Fonts/Menlo.ttc",
+    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
 ]
 
 
@@ -85,11 +101,23 @@ def _duration(path: str | Path) -> float:
         return 0.0
 
 
-def _font() -> str:
-    for f in FONT_CANDIDATES:
+def _font(candidates: list[str] = FONT_CANDIDATES) -> str:
+    for f in candidates:
         if f and Path(f).exists():
             return f
     return ""
+
+
+_AUDIO_CACHE: dict[str, bool] = {}
+
+
+def _has_audio(path: str) -> bool:
+    """True when the file has an audio stream (mock FLUX clips have none)."""
+    if path not in _AUDIO_CACHE:
+        p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                            "-of", "csv=p=0", path], capture_output=True, text=True)
+        _AUDIO_CACHE[path] = bool(p.stdout.strip())
+    return _AUDIO_CACHE[path]
 
 
 _SHARP_CACHE: dict[tuple[str, int], float] = {}
@@ -133,10 +161,10 @@ def seg_sharpness(clip: str, start: float, src_dur: float) -> float:
                sharpness(clip, start + max(0.0, src_dur - 0.08)))
 
 
-def _wrap_caption(text: str, width: int = 22) -> str:
+def _wrap_caption(text: str, width: int = 30) -> str:
     text = " ".join(text.split())
-    if len(text) > 40:
-        text = text[:39].rstrip() + "…"
+    if len(text) > 60:
+        text = text[:59].rstrip() + "…"
     lines = textwrap.wrap(text, width=width) or [""]
     if len(lines) > 2:
         lines = [lines[0], " ".join(lines[1:])]
@@ -164,6 +192,132 @@ def _q(path: Path | str) -> str:
 
 
 # ---------------------------------------------------------------- planning
+class SourceLedger:
+    """Source seconds already on screen, per clip file. Every window of a file must be disjoint from the
+    others, so no moment of a clip is shown twice."""
+
+    def __init__(self) -> None:
+        self.used: dict[str, list[tuple[float, float]]] = {}
+
+    def take(self, src: str, a: float, b: float) -> None:
+        self.used.setdefault(src, []).append((a, b))
+
+    def release(self, src: str, a: float, b: float) -> None:
+        spans = self.used.get(src, [])
+        if (a, b) in spans:
+            spans.remove((a, b))
+
+    def free(self, src: str, dur: float) -> list[tuple[float, float]]:
+        """Unused source intervals of `src` inside [0, dur - 0.05]."""
+        out, t = [], 0.0
+        for a, b in sorted(self.used.get(src, [])):
+            if a > t + 1e-6:
+                out.append((t, min(a, dur - 0.05)))
+            t = max(t, b)
+        if dur - 0.05 > t + 1e-6:
+            out.append((t, dur - 0.05))
+        return [(a, b) for a, b in out if b - a > 1e-6]
+
+    def room_after(self, src: str, t: float, dur: float) -> float:
+        """Free source seconds from `t` to the next used window (or the clip's end)."""
+        nxt = [a for a, _ in self.used.get(src, []) if a >= t - 1e-6]
+        return max(0.0, min([dur - 0.05] + nxt) - t)
+
+
+def _windows(free: list[tuple[float, float]], fps: int, rng: random.Random, t_best: float,
+             hold: float = 0.0) -> list[tuple[float, float]]:
+    """Disjoint (start, length) windows inside the free source intervals. Each interval holds as many
+    slots of at least CLIP_WIN_MIN as fit (a 5 s clip: 3 slots of about 1.65 s), at most MAX_WINDOWS
+    spread over the clip; each window is CLIP_SEG long or its slot, whichever is shorter, in whole
+    frames. The window whose slot holds the strongest frame snaps to it, inside its slot only.
+    `hold` keeps a strip at the end of the longest interval free (burst shots in action beats)."""
+    free = list(free)
+    if hold and free:
+        i = max(range(len(free)), key=lambda j: free[j][1] - free[j][0])
+        if free[i][1] - free[i][0] > hold + CLIP_SEG_MIN:
+            free[i] = (free[i][0], free[i][1] - hold)
+    slots: list[tuple[float, float]] = []
+    for a, b in free:
+        n = int((b - a) // CLIP_WIN_MIN) or (1 if b - a >= CLIP_SEG_MIN else 0)
+        slots += [(a + i * (b - a) / n, (b - a) / n) for i in range(n)]
+    if not slots and free:   # a very short clip: one window over its longest free run
+        a, b = max(free, key=lambda x: x[1] - x[0])
+        if b - a >= 0.5:
+            slots = [(a, b - a)]
+    if len(slots) > MAX_WINDOWS:
+        slots = [slots[round(j * (len(slots) - 1) / (MAX_WINDOWS - 1))] for j in range(MAX_WINDOWS)]
+    out = []
+    for j, (a, w) in enumerate(slots):
+        n = max(1, int(min(rng.uniform(*CLIP_SEG), w) * fps + 1e-6))
+        length = min(n / fps, w)
+        frac = j / (len(slots) - 1) if len(slots) > 1 else 0.0
+        out.append([a + (w - length) * frac, length, a, w])
+    if out:
+        near = min(out, key=lambda x: 0.0 if x[2] <= t_best <= x[2] + x[3] else abs(x[0] + x[1] / 2 - t_best))
+        near[0] = min(max(near[2], t_best - 0.1), near[2] + near[3] - near[1])
+    return [(st, length) for st, length, _, _ in out]
+
+
+def _still_items(scene: dict, abs_path, resolve) -> list[tuple[str, str | None]]:
+    """(resolved still path, clip it is the start frame of, or None). A still is a path or
+    {"path": ..., "start_frame_of": "<clip path>"}."""
+    out = []
+    for item in scene.get("stills", []):
+        path, of = (item.get("path"), item.get("start_frame_of")) if isinstance(item, dict) else (item, None)
+        r = resolve(path) if path else None
+        if r:
+            out.append((r, abs_path(of) if of else None))
+    return out
+
+
+def _talk_cuts(total: int, line: str, fps: int) -> list[int]:
+    """Frame counts of the 2-3 abutting windows of a talk take (`total` frames). Cuts fall on a clause
+    boundary of the line (mapped by word count) when one lies within 0.6 s of the even split and keeps every
+    window inside TALK_WIN; otherwise on the even split."""
+    length = total / fps
+    if length < 2 * TALK_WIN[0]:
+        return [total]
+    k = min(3, max(2, math.ceil(length / TALK_WIN[1])))
+    words = [len(c.split()) for c in split_clauses(line)] if line else []
+    marks = [length * sum(words[:i]) / max(1, sum(words)) for i in range(1, len(words))]
+    bounds = [0]
+    for j in range(1, k):
+        ideal, prev = length * j / k, bounds[-1] / fps
+        lo = max(prev + TALK_WIN[0], length - TALK_WIN[1] * (k - j))
+        hi = min(prev + TALK_WIN[1], length - TALK_WIN[0] * (k - j))
+        ok = [m for m in marks if lo <= m <= hi and abs(m - ideal) <= 0.6]
+        bounds.append(round((min(ok, key=lambda m: abs(m - ideal)) if ok else ideal) * fps))
+    bounds.append(total)
+    return [b - a for a, b in zip(bounds, bounds[1:])]
+
+
+def _talk_segments(clip: str, dur: float, line: str, fps: int, si: int) -> list[Seg]:
+    """A talk take, nearly whole (0.15 s to the end - 0.1 s), as abutting windows: wide, punch-in, wide.
+    Captions are the line's clauses timed by word count across the take, as cues per window."""
+    a0 = 0.15
+    total = int((dur - 0.1 - a0) * fps + 1e-6)
+    segs, f0 = [], 0
+    for j, n in enumerate(_talk_cuts(total, line, fps)):
+        s = Seg("clip", n, src=clip, start=a0 + f0 / fps, scene=si, motion="talk_punch" if j % 2 else "")
+        s.extra.update(src_dur=n / fps, talk=True)
+        segs.append(s)
+        f0 += n
+    clauses = split_clauses(line) if line else []
+    words = [max(1, len(c.split())) for c in clauses]
+    span, acc, cues = f0 / fps, 0, []
+    for c, w in zip(clauses, words):
+        cues.append((c, span * acc / sum(words), span * (acc + w) / sum(words)))
+        acc += w
+    off = 0.0
+    for s in segs:
+        d = s.frames / fps
+        s.extra["cues"] = [(c, round(max(0.0, a - off), 3), round(min(d, b - off), 3))
+                           for c, a, b in cues if b > off + 1e-6 and a < off + d - 1e-6]
+        s.caption = s.extra["cues"][0][0] if s.extra["cues"] else ""
+        off += d
+    return segs
+
+
 def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     fps = int(plan.get("fps", 24))
     rng = random.Random(plan.get("seed", 7))
@@ -171,44 +325,60 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
     def frames(sec: float) -> int:
         return max(1, round(sec * fps))
 
-    def resolve(p: str) -> str | None:
+    def abs_path(p: str) -> str:
         pp = Path(p)
-        pp = pp if pp.is_absolute() else base / pp
-        return str(pp) if pp.exists() else None
+        return str(pp if pp.is_absolute() else base / pp)
+
+    def resolve(p: str) -> str | None:
+        return abs_path(p) if Path(abs_path(p)).exists() else None
 
     gated: list[dict] = []
+    ledger = SourceLedger()
+    used_stills: set[str] = set()
     title = Seg("title", frames(TITLE_FRAMES_S))
     segs: list[Seg] = [title]
-    best_open: tuple[int, str, float] | None = None
+    # profile every clip first: the cold open takes the episode's strongest moment before any scene does
+    profiles: list[dict[str, tuple[float, float, float, float]]] = []   # clip -> (dur, t_best, score, median)
+    for scene in plan.get("scenes", []):
+        info: dict[str, tuple[float, float, float, float]] = {}
+        for clip in ([] if scene.get("talk") else (resolve(p) for p in scene.get("clips", []))):
+            if clip and clip not in info:
+                dur = _duration(clip)
+                if dur > 0.5:
+                    info[clip] = (dur, *clip_profile(clip, dur))
+        profiles.append(info)
+    best = max(((v[2], c, v[1], v[0]) for info in profiles for c, v in info.items()), default=None)
+    span = title.frames / fps
+    if best and best[3] - 0.05 >= span:   # cold open: title over the strongest frame in the whole episode
+        _, clip, t, dur = best
+        title.src, title.start = clip, min(max(0.0, t - 0.2), dur - 0.05 - span)
+        title.extra["src_dur"] = span
+        ledger.take(clip, title.start, title.start + span)
     for si, scene in enumerate(plan.get("scenes", [])):
-        cap = scene.get("caption") or scene.get("beat") or ""
+        cap = scene["caption"] if "caption" in scene else (scene.get("beat") or "")  # "" = no subtitles
         action = bool(scene.get("action")) or any(w in str(scene.get("beat", "")).lower() for w in ACTION_WORDS)
-        clips = [c for c in (resolve(p) for p in scene.get("clips", [])) if c]
-        stills = [s for s in (resolve(p) for p in scene.get("stills", [])) if s]
+        info = profiles[si]
+        if scene.get("talk"):   # one continuous take with its own dialogue: no ramp, burst, CRT, black or stills
+            clip = next((c for c in (resolve(p) for p in scene.get("clips", [])) if c), None)
+            dur = _duration(clip) if clip else 0.0
+            if dur <= 0.5:
+                log.warning("scene %d: talk scene without a usable clip, skipped", si)
+                continue
+            talk = _talk_segments(clip, dur, scene.get("line") or cap, fps, si)
+            for s in talk:
+                ledger.take(s.src, s.start, s.start + s.extra["src_dur"])
+            segs += [Seg("flash", 2, scene=si)] + talk
+            continue
+        stills = _still_items(scene, abs_path, resolve)
         segs += [Seg("flash", 2, scene=si)]   # 2-frame white impact flash on every scene change
         clip_segs: list[tuple[float, Seg]] = []  # (sharpness, seg) that pass the gate
         candidates: list[tuple[float, Seg]] = []
-        freeze_src: list[tuple[str, float]] = []
-        for clip in clips:
-            dur = _duration(clip)
-            if dur <= 0.5:
-                continue
-            t_best, score, med = clip_profile(clip, dur)
-            freeze_src.append((clip, t_best))
-            if best_open is None or score > best_open[0]:
-                best_open = (score, clip, t_best)
-            k = 3 if dur >= 4.2 else 2 if dur >= 2.8 else 1
-            lens = [min(rng.uniform(*CLIP_SEG), dur - 0.05) for _ in range(k)]
-            if k == 1:
-                lens = [max(min(dur - 0.05, CLIP_SEG[1]), min(CLIP_SEG_MIN, dur))]
-            # windows spread across the clip; the one nearest the strongest frame snaps to it
-            starts = [((dur - lens[j]) * j / (k - 1)) if k > 1 else 0.0 for j in range(k)]
-            near = min(range(k), key=lambda j: abs(starts[j] + lens[j] / 2 - t_best))
-            starts[near] = min(max(0.0, t_best - 0.1), dur - lens[near])
-            for j in range(k):
-                s = Seg("clip", frames(lens[j]), src=clip, start=starts[j], caption=cap, scene=si)
-                s.extra["src_dur"] = lens[j]
-                sh = seg_sharpness(clip, starts[j], lens[j])
+        hold = BURST_FRAMES / fps + 0.05 if action else 0.0
+        for clip, (dur, t_best, _score, med) in info.items():
+            for start, length in _windows(ledger.free(clip, dur), fps, rng, t_best, hold):
+                s = Seg("clip", round(length * fps), src=clip, start=start, caption=cap, scene=si)
+                s.extra["src_dur"] = length
+                sh = seg_sharpness(clip, start, length)
                 s.extra["sharp"], s.extra["sharp_median"] = round(sh, 1), round(med, 1)
                 s.extra["passes_gate"] = sh >= max(SHARP_GATE * med, SHARP_FLOOR)
                 candidates.append((sh, s))
@@ -226,7 +396,11 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             # absolute gate (Nolan 2026-11-02): no window passes and no stills -> the scene is skipped, never a smeared opener
             log.warning("scene %d: no clip window passes the sharpness gate and no stills; scene skipped", si)
             continue
-        if not clip_segs and not stills:
+        for _, s in clip_segs:   # these windows are now on screen: nothing else may show them
+            ledger.take(s.src, s.start, s.start + s.extra["src_dur"])
+        # a start frame is its clip's first moment: with clip footage on screen it would show it twice
+        usable = list(dict.fromkeys(p for p, of in stills if p not in used_stills and not (clip_segs and of in info)))
+        if not clip_segs and not usable:
             continue
         # the sharpest gate-passing window opens the scene; the rest round-robin across the clips
         clip_segs.sort(key=lambda x: -x[0])
@@ -253,71 +427,78 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if ordered:
             ramp = ordered[1] if len(ordered) > 1 else ordered[0]
             speed = 1.4 if si % 2 == 0 else 0.7
-            dur = _duration(ramp.src)
+            dur = info[ramp.src][0]
             # keep the gated window's start (moving it back could pull in smeared frames); a speed-up
-            # that would run past the clip's end shortens the shot instead
-            src_dur = min(ramp.frames / fps / speed, dur - 0.05 - ramp.start)
-            if src_dur * speed >= 0.6:
-                ramp.speed = speed
-                ramp.extra["src_dur"] = src_dur
-                ramp.frames = frames(src_dur * speed)
+            # may only run on into unused source, else it shortens the shot instead
+            ledger.release(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
+            src_dur = min(ramp.frames / fps / speed, ledger.room_after(ramp.src, ramp.start, dur))
+            n = int(src_dur * speed * fps + 1e-6)
+            if n / fps >= 0.6:
+                ramp.speed, ramp.frames = speed, n
+                ramp.extra["src_dur"] = n / fps / speed
                 ramp.extra["ramp"] = True
-        # still pool: given stills first, then freeze frames from the clips' strongest moments
-        pool = list(stills)
-        for clip, t in freeze_src:
-            png = workdir / f"freeze-{si}-{len(pool)}.png"
-            _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", clip, "-frames:v", "1", str(png)])
-            pool.append(str(png))
+            ledger.take(ramp.src, ramp.start, ramp.start + ramp.extra["src_dur"])
+        # CRT-monitor transition into every other scene: one of the scene's own windows gets the CRT
+        # treatment (never the opener, the ramp or the closing shot), so it adds no repeated footage
+        if si % 2 == 1:
+            pick = [s for s in ordered[1:-1] if not s.extra.get("ramp")]
+            if pick:
+                c = pick[0]
+                ledger.release(c.src, c.start, c.start + c.extra["src_dur"])
+                c.kind, c.motion = "crt", ""
+                c.frames = min(c.frames, frames(rng.uniform(*CRT_SEG)))
+                c.extra["src_dur"] = c.frames / fps
+                ledger.take(c.src, c.start, c.start + c.extra["src_dur"])
         motions = ["push", "shake", "pull"]
         body: list[Seg] = []
         n_still = 0
 
-        def still_seg(src: str) -> Seg:
+        def still_seg() -> Seg:
             nonlocal n_still
             n_still += 1
+            src = usable.pop(0)
+            used_stills.add(src)   # every still is on screen at most once in the whole cut
             return Seg("still", frames(rng.uniform(*STILL_SEG)), src=src,
                        motion=motions[(n_still - 1 + si) % 3], caption=cap, scene=si)
 
         for idx, cs in enumerate(ordered):
             body.append(cs)
             # alternate clip / still / clip: a cutaway after clip segments 0, 2, 4 ...
-            if idx % 2 == 0 and idx < len(ordered) - 1 and pool:
-                body.append(still_seg(pool[n_still % len(pool)]))
-        if ordered:
-            # every supplied still is used at least once, even in a one-clip scene: the leftovers go
-            # before the last clip segment (or after the only one)
-            left = [p for p in stills if p not in {b.src for b in body}]
-            for p in left:
-                pos = len(body) - 1 if len(ordered) > 1 else len(body)
-                body.insert(pos, still_seg(p))
-        else:   # stills-only scene: a montage of every supplied still
-            for p in pool:
-                body.append(still_seg(p))
-        # action beats: a burst of 0.33 s shots from scattered parts of the clips, before the last shot
+            if idx % 2 == 0 and idx < len(ordered) - 1 and usable:
+                body.append(still_seg())
+        # the leftover stills go before the last clip segment (or after the only one); a scene
+        # without usable clip windows becomes a montage of its stills
+        while usable:
+            pos = len(body) - 1 if len(ordered) > 1 else len(body)
+            body.insert(pos, still_seg())
+        # action beats: a burst of 0.33 s shots from still-unused parts of the clips, before the last shot
         if action and ordered:
             burst = []
+            bl = BURST_FRAMES / fps
+            srcs = list(dict.fromkeys(s.src for s in ordered))
             for b in range(BURST_COUNT):
-                src = ordered[b % len(ordered)].src
-                d = _duration(src)
-                floor = SHARP_GATE * ordered[b % len(ordered)].extra.get("sharp_median", 0)
+                src = srcs[b % len(srcs)]
+                dur, _, _, med = info[src]
+                spans = [(a, e) for a, e in ledger.free(src, dur) if e - a >= bl]
                 st = None
                 for _ in range(5):   # sharpness gate for burst shots as well; skip the shot if nothing passes
-                    cand = rng.uniform(0.0, max(0.0, d - BURST_FRAMES / fps - 0.1))
-                    if seg_sharpness(src, cand, BURST_FRAMES / fps) >= floor:
+                    if not spans:
+                        break
+                    a, e = rng.choice(spans)
+                    cand = rng.uniform(a, e - bl)
+                    if seg_sharpness(src, cand, bl) >= SHARP_GATE * med:
                         st = cand
                         break
                 if st is None:
                     continue
+                ledger.take(src, st, st + bl)
                 burst.append(Seg("clip", BURST_FRAMES, src=src, start=st, caption=cap, scene=si,
-                                 extra={"src_dur": BURST_FRAMES / fps, "burst": True}))
+                                 extra={"src_dur": bl, "burst": True}))
             body = body[:-1] + burst + body[-1:] if len(body) > 1 else body + burst
-        # occasional CRT-monitor insert as the transition into every other scene
-        if si % 2 == 1 and ordered:
-            src = ordered[-1].src
-            n_crt = frames(rng.uniform(*CRT_SEG))
-            d = _duration(src)
-            body.insert(0, Seg("crt", n_crt, src=src, start=min(ordered[-1].start, max(0.0, d - n_crt / fps - 0.05)), caption=cap,
-                               scene=si, extra={"src_dur": n_crt / fps}))
+        crt = next((s for s in body if s.kind == "crt"), None)
+        if crt:   # the CRT shot is the transition: it plays first
+            body.remove(crt)
+            body.insert(0, crt)
         # 1-frame black on hard beats: before the speed ramp and before the scene's last shot
         final: list[Seg] = []
         for i, s in enumerate(body):
@@ -334,33 +515,96 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
             s.pop = s.caption != prev
             prev = s.caption
         segs += final
-    if best_open:   # cold open: title over the strongest frame in the whole episode
-        title.src, title.start = best_open[1], max(0.0, best_open[2] - 0.2)
-        title.extra["src_dur"] = title.frames / fps
-        for sg in segs:   # a scene opener on the same moment continues after the title instead of repeating it
-            if sg.kind == "clip" and sg.src == title.src and abs(sg.start - title.start) < 1.5:
-                sg.start = min(_duration(sg.src) - sg.extra["src_dur"] - 0.05, title.start + title.frames / fps)
+    after = plan.get("title_after_scene")
+    if after is not None:   # cold open first, the title lands on the drop right after scene `after`
+        idx = max((i for i, s in enumerate(segs) if 0 <= s.scene <= after), default=None)
+        if idx is not None:
+            segs.remove(title)
+            segs.insert(idx, title)
     segs += [Seg("flash", 2), Seg("end", frames(END_FRAMES_S))]
     t = 0.0
     plan_segments.gated = gated
     for s in segs:
         s.at = round(t, 4)
         t += s.frames / fps
+    cd = plan.get("countdown")
+    for si, scene in enumerate(plan.get("scenes", []) if cd else []):
+        body = [s for s in segs if s.scene == si and s.kind != "flash"]
+        if scene.get("beat") != cd.get("scene_beat") or scene.get("talk") or not body:
+            continue
+        total = sum(s.frames for s in body) / fps
+        for s in body:
+            if s.kind in ("clip", "still", "crt"):
+                s.extra["countdown"] = {"label": cd.get("label", ""), "total": round(total, 3),
+                                        "offset": round(s.at - body[0].at, 4)}
+        break
     return segs
+
+
+def reuse_report(timeline: list[dict], fps: int) -> dict:
+    """Recount reuse from the final timeline (not the planner's ledger): clip footage windows of the
+    same file overlapping by more than one frame, and stills shown more than once."""
+    spans: dict[str, list[tuple[float, float]]] = {}
+    stills: list[str] = []
+    for s in timeline:
+        if s["kind"] in ("clip", "crt", "title") and s["src"]:
+            shown = s["extra"]["src_dur"] if s["extra"].get("ramp") else s["frames"] / fps / s["speed"]
+            spans.setdefault(s["src"], []).append((s["start"], s["start"] + shown))
+        elif s["kind"] == "still":
+            stills.append(s["src"])
+    overlaps = sum(1 for iv in spans.values() for i in range(len(iv)) for j in range(i + 1, len(iv))
+                   if min(iv[i][1], iv[j][1]) - max(iv[i][0], iv[j][0]) > 1 / fps)
+    return {"overlapping_windows": overlaps, "still_repeats": len(stills) - len(set(stills)),
+            "unique_sources": len(spans) + len(set(stills)),
+            "source_seconds_used": round(sum(b - a for iv in spans.values() for a, b in iv), 2)}
 
 
 # ---------------------------------------------------------------- rendering
 def _caption_filter(s: Seg, font: str, workdir: Path, idx: int, H: int) -> str:
+    size = max(26, H // 18)
+    fontopt = f"fontfile={_q(font)}:" if font else ""
+    style_ = (f":expansion=none:fontsize={size}:fontcolor={GOLD}:box=1:boxcolor=black@0.62:boxborderw={size // 3}"
+              f":line_spacing={size // 5}:x=(w-text_w)/2:y=h-text_h-{H // 11}")
+    if s.extra.get("cues"):   # talk take: each clause on screen for its share of the spoken line
+        out = ""
+        for k, (text, a, b) in enumerate(s.extra["cues"]):
+            tf = workdir / f"cap-{idx}-{k}.txt"
+            tf.write_text(_wrap_caption(text))
+            alpha = f":alpha='min(1,(t-{a:.3f})*10)'" if a > 0.001 else ""
+            out += f",drawtext={fontopt}textfile={_q(tf)}{style_}:enable='between(t,{a:.3f},{b:.3f})'{alpha}"
+        return out
     if not s.caption:
         return ""
     tf = workdir / f"cap-{idx}.txt"
     tf.write_text(_wrap_caption(s.caption))
-    size = max(26, H // 18)
     alpha = ":alpha='min(1,t*10)'" if s.pop else ""
-    fontopt = f"fontfile={_q(font)}:" if font else ""
-    return (f",drawtext={fontopt}textfile={_q(tf)}:expansion=none:fontsize={size}:fontcolor={GOLD}"
-            f":box=1:boxcolor=black@0.62:boxborderw={size // 3}:line_spacing={size // 5}"
-            f":x=(w-text_w)/2:y=h-text_h-{H // 11}{alpha}")
+    return f",drawtext={fontopt}textfile={_q(tf)}{style_}{alpha}"
+
+
+def _countdown_filter(s: Seg, workdir: Path, idx: int, H: int) -> str:
+    """Big red digital countdown top-right: label above, 00:SS counting down to 00:00 over the scene;
+    the final second flashes white."""
+    cd = s.extra.get("countdown")
+    if not cd:
+        return ""
+    mono = _font(MONO_FONT_CANDIDATES) or _font()
+    fontopt = f"fontfile={_q(mono)}:" if mono else ""
+    rem = f"({cd['total']:.3f}-{cd['offset']:.4f}-t)"
+    digits, label = workdir / f"cd-{idx}.txt", workdir / f"cdl-{idx}.txt"
+    digits.write_text("00:%{eif:max(0,floor(" + rem + ")):d:2}")
+    label.write_text(cd["label"][:28])
+    size, lsize, m = H // 9, max(16, H // 34), H // 24
+    box = f":box=1:boxcolor=black@0.72:boxborderw={max(6, size // 6)}"
+    red = f"gte({rem},1)+lt({rem},1)*gte(mod(t*6,1),0.5)"
+    white = f"lt({rem},1)*lt(mod(t*6,1),0.5)"
+    out = ""
+    if cd["label"]:
+        out += (f",drawtext={fontopt}textfile={_q(label)}:expansion=none:fontsize={lsize}:fontcolor={COUNTDOWN_RED}"
+                f":box=1:boxcolor=black@0.72:boxborderw=6:x=w-text_w-{m}:y={m}")
+    for color, enable in ((COUNTDOWN_RED, red), ("white", white)):
+        out += (f",drawtext={fontopt}textfile={_q(digits)}:expansion=normal:fontsize={size}:fontcolor={color}"
+                f"{box}:x=w-text_w-{m}:y={m + lsize + 18}:enable='{enable}'")
+    return out
 
 
 def _wordmark(font: str, workdir: Path, H: int) -> str:
@@ -402,12 +646,15 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
     fit = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
     enc = ["-frames:v", str(s.frames), "-r", str(fps), "-an", "-c:v", "libx264", "-preset", "veryfast",
            "-crf", "19", "-pix_fmt", "yuv420p", "-video_track_timescale", str(fps * 512), str(out)]
-    cap = _caption_filter(s, font, workdir, idx, H) + _wordmark(font, workdir, H)
+    cap = _caption_filter(s, font, workdir, idx, H) + _wordmark(font, workdir, H) + _countdown_filter(s, workdir, idx, H)
     if s.kind == "clip":
         src_dur = s.extra.get("src_dur", s.frames / fps / s.speed)
         vf = f"{fit},setpts={s.speed}*(PTS-STARTPTS),fps={fps}"
         if s.motion == "punch":   # quick push-in on the opener
             vf += f",zoompan=z='min(1+0.006*on,1.18)':d=1:x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':s={W}x{H}:fps={fps}"
+        elif s.motion == "talk_punch":   # tighter framing on the speaker: centred, upper third (the face)
+            vf += (f",scale=trunc(iw*{TALK_PUNCH}/2)*2:trunc(ih*{TALK_PUNCH}/2)*2"
+                   f",crop={W}:{H}:'(iw-ow)/2':'max(0,min(ih-oh,ih/3-oh/2))'")
         cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{s.start:.3f}", "-t", f"{src_dur + 0.25:.3f}",
                "-i", s.src, "-vf", vf + cap + ",tpad=stop_mode=clone:stop_duration=1"] + enc
     elif s.kind == "still":
@@ -464,8 +711,56 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
 
 
 # ---------------------------------------------------------------- audio
-def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple[list[str], str, list[str]]:
-    """Returns (ffmpeg input args, filter_complex, notes). Input 0 is the video."""
+INTRO_HIT_FROM_END = 0.55   # music kit riser: its impact sits 0.55 s before the end
+
+
+class _Bus:
+    """One audio bus rendered by its own ffmpeg run: many delayed file inputs in one graph with the other
+    buses ended the whole mix early (ffmpeg 7.1), so each bus is a WAV stem of exactly the cut's length."""
+
+    def __init__(self) -> None:
+        self.args: list[str] = []
+        self.parts: list[str] = []
+        self.outs: list[str] = []
+
+    def add(self, args: list[str], chain: str) -> None:
+        i = self.args.count("-i")
+        self.args += args
+        self.parts.append(f"[{i}:a]{chain}[a{i}]")
+        self.outs.append(f"[a{i}]")
+
+    def render(self, out: Path, total: float, post: str = "", extra: list[str] | None = None) -> Path | None:
+        """Mix the bus to `out`; `post` is a filter chain from [bus] to [out] (default: pad/trim only)."""
+        if not self.outs:
+            return None
+        mixed = "".join(self.outs) + (f"amix=inputs={len(self.outs)}:normalize=0:duration=longest" if len(self.outs) > 1
+                                      else "anull")
+        graph = ";".join(self.parts + [mixed + "[bus]", post or f"[bus]apad,atrim=0:{total:.3f}[out]"])
+        _run(["ffmpeg", "-y", "-v", "error"] + self.args + (extra or []) + ["-filter_complex", graph, "-map", "[out]",
+             "-c:a", "pcm_f32le", "-ar", "48000", str(out)])
+        got = _duration(out)
+        if got < total - 0.1:
+            raise RuntimeError(f"audio bus {out.name} rendered {got:.2f}s of {total:.2f}s")
+        return out
+
+
+def _line_wav(src: str, out: Path, start: float = 0.0, dur: float | None = None) -> Path:
+    """One voice line loudnorm'd (-16 LUFS) to its own WAV, optionally a source span padded to exactly `dur`.
+    Done per line in its own run: loudnorm inside the multi-input bus graph truncated the bus at the third line."""
+    span = f"atrim=start={start:.4f}:duration={dur:.4f},asetpts=PTS-STARTPTS," if dur else ""
+    pad = f",apad,atrim=0:{dur:.4f}" if dur else ""
+    _run(["ffmpeg", "-y", "-v", "error", "-i", src, "-af",
+          f"{span}aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-16:TP=-2,aresample=48000{pad}",
+          "-c:a", "pcm_f32le", str(out)])
+    return out
+
+
+def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path,
+                 work: Path) -> tuple[list[str], str, list[str]]:
+    """Renders the buses to WAV stems in `work` and returns (ffmpeg input args, filter_complex, notes) for the
+    final mix; input 0 is the video. Buses: voice (narration + the talk takes' own dialogue; the music ducks
+    under it), music (optional intro riser from 0, the bed from the title drop, continuous to the end), SFX
+    (hits + action clips' own sound at `clip_audio_gain`). Final loudnorm I=-14 TP=-1."""
     def resolve(p) -> str | None:
         if not p:
             return None
@@ -473,18 +768,17 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple
         pp = pp if pp.is_absolute() else base / pp
         return str(pp) if pp.exists() and pp.stat().st_size > 0 else None
 
-    inputs: list[str] = []
-    parts: list[str] = [f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[base]"]
-    mix = ["[base]"]
+    fps = int(plan.get("fps", 24))
+    stereo = "aresample=48000,aformat=channel_layouts=stereo"
     notes: list[str] = []
-    n = 1
     scene_start = {}
     for s in segs:
         if s.scene >= 0 and s.kind not in ("flash", "black") and s.scene not in scene_start:
             scene_start[s.scene] = s.at
     changes = [s.at for s in segs if s.kind == "flash"]
+    title = next((s for s in segs if s.kind == "title"), None)
 
-    voices = []
+    voice = _Bus()
     items = list(plan.get("narration") or [])
     for si, sc in enumerate(plan.get("scenes", [])):
         if sc.get("narration_audio"):
@@ -498,58 +792,99 @@ def _audio_graph(plan: dict, segs: list[Seg], total: float, base: Path) -> tuple
             continue  # the scene was skipped by the gate: its narration is dropped, never played over another scene
         at = float(item["at"]) if item.get("at") is not None else (
             0.15 if sc is None or sc < 0 else scene_start.get(sc, 0.0) + 0.1)
-        inputs += ["-i", p]
         ms = int(at * 1000)
-        parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,loudnorm=I=-16:TP=-2,"
-                     f"adelay={ms}|{ms}[v{n}]")
-        voices.append(f"[v{n}]")
-        n += 1
-    if voices:
-        parts.append("".join(voices) + f"amix=inputs={len(voices)}:normalize=0:duration=longest,"
-                     f"apad,atrim=0:{total:.3f},asplit=2[voice][vkey]")
-        mix.append("[voice]")
-        notes.append(f"narration x{len(voices)}")
+        line = _line_wav(p, work / f"line-n{len(voice.outs)}.wav")
+        voice.add(["-i", str(line)], f"{stereo},adelay={ms}|{ms}")
+    n_narr = len(voice.outs)
+    # dialogue: each talk take's own sound for exactly the source span on screen, one line per take
+    talks: dict[int, list[Seg]] = {}
+    for s in segs:
+        if s.extra.get("talk"):
+            talks.setdefault(s.scene, []).append(s)
+    for ws in talks.values():
+        if not _has_audio(ws[0].src):
+            continue
+        span, ms = sum(w.frames for w in ws) / fps, int(ws[0].at * 1000)
+        line = _line_wav(ws[0].src, work / f"line-d{len(voice.outs)}.wav", ws[0].start, span)
+        voice.add(["-i", str(line)], f"{stereo},adelay={ms}|{ms}")
+    voice_wav = voice.render(work / "bus-voice.wav", total)
+    if n_narr:
+        notes.append(f"narration x{n_narr}")
+    if len(voice.outs) > n_narr:
+        notes.append(f"dialogue bus x{len(voice.outs) - n_narr}")
 
+    music_bus = _Bus()
     music = resolve(plan.get("music"))
+    intro = resolve(plan.get("music_intro"))
+    music_wav = None
     if music:
-        inputs += ["-stream_loop", "-1", "-i", music]
-        fade_out = max(0.0, total - 1.2)
-        parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total:.3f},"
-                     f"volume=0.55,afade=t=in:d=0.4,afade=t=out:st={fade_out:.3f}:d=1.2[m]")
-        if voices:   # duck the bed under narration
-            parts.append("[m][vkey]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=400:makeup=1[md]")
-            mix.append("[md]")
+        drop = title.at if title and title.at > 0 else 0.0
+        bed_at = drop if intro and drop > 0 else 0.0
+        if bed_at > 0:
+            # the riser's hit (INTRO_HIT_FROM_END before its end) lands on the drop: a cold open shorter than
+            # the riser skips the riser's head, a longer one starts the riser late; the bed takes over on the drop
+            offset = bed_at - max(0.0, _duration(intro) - INTRO_HIT_FROM_END)
+            head = f"atrim=start={-offset:.3f},asetpts=PTS-STARTPTS," if offset < 0 else ""
+            delay = f",adelay={int(offset * 1000)}:all=1" if offset > 0 else ""
+            music_bus.add(["-i", intro], f"{stereo},{head}volume={BED_VOLUME}{delay},atrim=0:{bed_at + 0.15:.3f},"
+                                         f"afade=t=out:st={bed_at:.3f}:d=0.15")
+        length, ms = total - bed_at, int(bed_at * 1000)
+        music_bus.add(["-stream_loop", "-1", "-i", music],
+                      # timestamps from the sample count: a looped mp3's own timestamps run ahead of its
+                      # samples, so trimming by them ended the bed ~0.6 s early
+                      f"{stereo},asetpts=N/SR/TB,atrim=0:{length:.3f},volume={BED_VOLUME},"
+                      f"afade=t=in:d={0.15 if bed_at > 0 else 0.4},afade=t=out:st={max(0.0, length - 1.2):.3f}:d=1.2,"
+                      f"adelay={ms}|{ms}")
+        if voice_wav:   # duck the bed under dialogue and narration (never under SFX)
+            k = music_bus.args.count("-i")
+            # the key is padded past the end: sidechaincompress stops ~0.6 s before its key does
+            post = (f"[bus]apad,atrim=0:{total:.3f}[m];[{k}:a]{stereo},apad=whole_dur={total + 2:.3f}[key];"
+                    f"[m][key]sidechaincompress=threshold=0.03:ratio=10:attack=20:release=400:makeup=1,"
+                    f"apad,atrim=0:{total:.3f}[out]")
+            music_wav = music_bus.render(work / "bus-music.wav", total, post, ["-i", str(voice_wav)])
         else:
-            mix.append("[m]")
-        notes.append("music bed" + (" (ducked)" if voices else ""))
-        n += 1
-    elif voices:
-        parts.append("[vkey]anullsink")
+            music_wav = music_bus.render(work / "bus-music.wav", total)
+        notes.append(("intro riser + " if bed_at > 0 else "") + "music bed" + (" (ducked)" if voice_wav else ""))
 
-    hits = 0
+    fx = _Bus()
+    title_hit = [title.at] if title and plan.get("title_after_scene") is not None and title.at > 0 else []
     for item in plan.get("sfx") or []:
         p = resolve(item.get("path") or item.get("name"))
         if not p:
             continue
-        times = [float(item["at"])] if item.get("at") is not None else changes
+        times = [float(item["at"])] if item.get("at") is not None else changes + title_hit
         gain = float(item.get("gain", 0.8))
         for t in times:
-            inputs += ["-i", p]
             ms = int(max(0.0, t - float(item.get("lead", 0.0))) * 1000)
-            parts.append(f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume={gain},"
-                         f"adelay={ms}|{ms}[s{n}]")
-            mix.append(f"[s{n}]")
-            n += 1
-            hits += 1
+            fx.add(["-i", p], f"{stereo},volume={gain},adelay={ms}|{ms}")
+    hits = len(fx.outs)
     if hits:
         notes.append(f"sfx hits x{hits}")
-    if len(mix) == 1:
-        parts.append(f"[base]anull[aout]")
+    # action scenes: each shown window's own sound (same source span as the picture) on the SFX bus
+    for si, sc in enumerate(plan.get("scenes", [])):
+        gain = float(sc.get("clip_audio_gain") or 0)
+        if gain <= 0 or sc.get("talk"):
+            continue
+        for s in segs:
+            if s.scene != si or s.kind not in ("clip", "crt") or not s.src or not _has_audio(s.src):
+                continue
+            span, out_s, ms = s.extra.get("src_dur", s.frames / fps / s.speed), s.frames / fps, int(s.at * 1000)
+            tempo = f",atempo={1 / s.speed:.4f}" if s.speed != 1.0 else ""
+            fx.add(["-i", s.src], f"atrim=start={s.start:.4f}:duration={span:.4f},asetpts=PTS-STARTPTS,{stereo}{tempo},"
+                                  f"apad,atrim=0:{out_s:.4f},volume={gain},adelay={ms}|{ms}")
+    if len(fx.outs) > hits:
+        notes.append(f"clip audio x{len(fx.outs) - hits}")
+    fx_wav = fx.render(work / "bus-fx.wav", total)
+
+    stems = [w for w in (voice_wav, music_wav, fx_wav) if w]
+    if not stems:
         notes.append("silence")
-    else:
-        parts.append("".join(mix) + f"amix=inputs={len(mix)}:normalize=0:duration=first,"
-                     f"loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,atrim=0:{total:.3f}[aout]")
-    return inputs, ";".join(parts), notes
+        return [], f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[aout]", notes
+    inputs = [a for w in stems for a in ("-i", str(w))]
+    graph = ("".join(f"[{i + 1}:a]" for i in range(len(stems)))
+             + f"amix=inputs={len(stems)}:normalize=0:duration=longest,"
+             f"loudnorm=I=-14:TP=-1.0:LRA=11,aresample=48000,apad,atrim=0:{total:.3f}[aout]")
+    return inputs, graph, notes
 
 
 # ---------------------------------------------------------------- public
@@ -572,7 +907,7 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
               str(video)])
         total = sum(s.frames for s in segs) / fps
         if audio:
-            inputs, graph, notes = _audio_graph(plan, segs, total, base)
+            inputs, graph, notes = _audio_graph(plan, segs, total, base, work)
         else:
             inputs, graph, notes = [], f"anullsrc=r=48000:cl=stereo,atrim=0:{total:.3f}[aout]", ["silence (--no-audio)"]
         _run(["ffmpeg", "-y", "-v", "error", "-i", str(video)] + inputs +
@@ -587,6 +922,12 @@ def assemble(plan: dict, out: Path, audio: bool = True, base: Path | None = None
               "crt_inserts": sum(1 for s in segs if s.kind == "crt"),
               "longest_shot_s": round(max((s.frames for s in content), default=0) / fps, 3),
               "audio": notes, "timeline": [asdict(s) for s in segs]}
+    report["reuse"] = reuse_report(report["timeline"], fps)
+    title = next((s for s in segs if s.kind == "title"), None)
+    report["title_at"] = title.at if title else None
+    cd = next((s for s in segs if s.extra.get("countdown")), None)
+    report["countdown"] = ({"scene": cd.scene, "label": cd.extra["countdown"]["label"],
+                            "seconds": cd.extra["countdown"]["total"]} if cd else None)
     Path(str(out) + ".cuts.json").write_text(json.dumps(report, indent=1))
     log.info("cut: %s shots, %.1fs, %s cuts/min, audio=%s", report["shots"], total,
              report["cuts_per_minute"], notes)

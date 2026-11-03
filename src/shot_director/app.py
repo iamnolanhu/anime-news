@@ -251,6 +251,7 @@ class EpisodeRequest(BaseModel):
     writer: bool = True          # Router script writer; false = template script
     style_sheet: bool = True     # anchor-desk start frames use the series style sheet
     news_strategy: str | None = None  # auto-pick: "viral" (last30days engagement) or "headline"
+    continuity: bool = False     # one start frame per scene + chained clips (default: one frame per shot)
 
 
 @app.get("/api/news")
@@ -287,7 +288,8 @@ def run_episode(req: EpisodeRequest) -> dict:
                                engine=req.engine, body=req.body, minutes=req.minutes,
                                clip_seconds=req.clip_seconds, parallel=req.parallel,
                                render=req.render, cut=req.cut, use_writer=req.writer,
-                               style_sheet=req.style_sheet, news_strategy=req.news_strategy)
+                               style_sheet=req.style_sheet, news_strategy=req.news_strategy,
+                               continuity=req.continuity)
     except LookupError as e:
         raise HTTPException(503, str(e)) from e
     except ValueError as e:

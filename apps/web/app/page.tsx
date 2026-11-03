@@ -26,7 +26,7 @@ const STEPS = [
   {
     n: "04",
     title: "Anime cut",
-    body: "About 39 cuts a minute, subtitles, music riser and drop, title card. No source moment is shown twice. 16:9 and 9:16.",
+    body: "About 15 cuts a minute, subtitles, music riser and drop, title card. No source moment is shown twice. 16:9 and 9:16.",
     tech: "ffmpeg, on your machine",
   },
 ];

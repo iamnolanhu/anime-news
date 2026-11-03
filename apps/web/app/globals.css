@@ -55,6 +55,8 @@ body::after {
   background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, var(--sd-scanline-alpha)) 0 1px, transparent 1px 3px);
 }
 
+/* Component classes live in the components layer so Tailwind utilities (w-auto, w-16, ...) can override them. */
+@layer components {
 .display { font-family: var(--font-display); font-weight: 400; text-transform: uppercase; letter-spacing: 0.01em; line-height: 0.92; }
 .kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: #f5c518; }
 .kicker::before { content: "// "; color: #a3a3a3; }
@@ -185,6 +187,7 @@ body::after {
 
 /* Hero rule lines */
 .rule-gold { height: 1px; background: linear-gradient(90deg, #f5c518, rgba(245,197,24,.15)); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-property: color, background-color, border-color, opacity !important; }

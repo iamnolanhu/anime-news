@@ -53,7 +53,7 @@ function template(headline: string, minutes: number): Storyboard {
     id: newId("sb"),
     headline,
     source_text_excerpt: "",
-    series: "THE HOURLY BRIEFING",
+    series: "THE WEEKLY BRIEFING",
     logline: `The Anchor treats "${headline}" as the gravest story of the century.`,
     minutes,
     cast: cast(),

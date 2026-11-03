@@ -72,7 +72,7 @@ STRONG_CATEGORIES = ("business and economy", "politics and elections", "science 
 SOMBER_CATEGORIES = ("armed conflicts and attacks", "disasters and accidents")
 # news._SOMBER (deaths, violence) plus wars, attacks and disasters, applied to the item and its parent bullets.
 SOMBER_EXTRA = ("kill", "dead", "death", "die", "wound", "injur*", "casualt*", "war", "warfare", "wartime",
-                "attack", "strike", "airstrike", "missile", "bomb", "explosion", "explode", "shooting", "shot",
+                "attack*", "cyberattack*", "strike", "airstrike", "missile", "bomb", "explosion", "explode", "shooting", "shot",
                 "gunman", "gunmen", "gunfire", "stab*", "knife", "hostage", "kidnap*", "terror*", "militant",
                 "troops", "invasion", "invade", "military", "army", "conflict", "ceasefire", "genocide",
                 "massacr*", "execution", "executed", "earthquake", "flood", "hurricane", "cyclone", "typhoon",

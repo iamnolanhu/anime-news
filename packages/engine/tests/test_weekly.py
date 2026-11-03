@@ -85,6 +85,7 @@ def test_somber_filter_is_hard():
     assert W.somber(item("Shares fall as three people are killed in a factory", category="Business and economy"))
     assert W.somber(item("Oil prices rise", context=["2026 Iran war fuel crisis"]))   # the parent bullet counts
     assert W.somber(item("A cyclone makes landfall"))
+    assert W.somber(item("An AI gateway is compromised by attackers", category="Science and technology"))
     assert not W.somber(item("The Bank of Canada raises its policy interest rate by 25 basis points"))
     assert not W.somber(item("New studies show the chip warns users"))   # "dies" / "war" only as whole words
 

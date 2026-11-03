@@ -630,9 +630,12 @@ def _render_fields(entry: dict) -> dict:
 # -- one week -----------------------------------------------------------------------------------------
 
 def plan_week(week: str, media: Path, minutes: float = 1.0, quality: str = "480p", mock: bool | None = None,
-              refresh: bool = False, use_google: bool = True, use_viral: bool = False, fetch=None) -> dict:
-    """Sources + storyboard + meta (status "planned" unless the week already rendered). Nothing is rendered."""
-    picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral, fetch=fetch)
+              refresh: bool = False, use_google: bool = True, use_viral: bool = False, fetch=None,
+              picks: list[dict] | None = None) -> dict:
+    """Sources + storyboard + meta (status "planned" unless the week already rendered). Nothing is rendered.
+    `picks`: the week's headlines when the caller already has them (no second source lookup)."""
+    if picks is None:
+        picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral, fetch=fetch)
     sb = make_storyboard(week, picks, minutes, mock)
     wdir = week_dir(media, week)
     est = estimate_usd(sb, quality, Path(media))
@@ -673,6 +676,21 @@ def render_week(week: str, media: Path, router, minutes: float = 1.0, quality: s
     _write_json(wdir / "meta.json", meta)
     update_manifest(media)
     return meta
+
+
+def retry_estimate_usd(week: str, media: Path, meta: dict | None = None) -> float:
+    """USD estimate of retrying a partial week: only its failed shots (render_storyboard.retry_estimate), with the
+    shared cast assets linked in as retry_week does."""
+    from . import render_storyboard as rs
+    meta = meta if meta is not None else read_meta(media, week)
+    wdir = week_dir(media, week)
+    shots = (meta.get("files") or {}).get("shots")
+    if not shots or not (wdir / shots).exists():
+        raise LookupError(f"{week}: no shots file to retry")
+    share_cache(Path(media), wdir)
+    doc = json.loads((wdir / shots).read_text())
+    return float(rs.retry_estimate(doc["storyboard"], doc["shots"], doc.get("quality", rs.DEFAULT_QUALITY),
+                                   wdir.resolve())["usd"])
 
 
 def retry_week(week: str, media: Path, router, max_cost: float | None = None) -> dict:
@@ -721,6 +739,14 @@ def print_plan(plan: dict, out=None) -> None:
     print(f"  cold open: {plan['storyboard']['headline']}", file=out)
 
 
+def _writer_spend(writer, before: int | None) -> float:
+    """USD of the writer calls billed on this thread since `before` (None: the writer was not used)."""
+    if before is None:
+        return 0.0
+    from . import render_storyboard as rs
+    return (writer.paid_calls() - before) * rs.PRICE["writer"]
+
+
 def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, quality: str = "480p",
         plan_only: bool = False, retry: bool = False, budget_usd: float = DEFAULT_BUDGET_USD, force: bool = False,
         do_publish: bool = False, refresh: bool = False, use_google: bool = True, use_viral: bool = False,
@@ -731,7 +757,10 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
     media = Path(media)
     spent, results = 0.0, []
     live = router is not None and router.mode == "live"
+    from . import render_storyboard as rs, writer
     for week in weeks:
+        writer0 = None  # the writer's paid-call count before this week's (live) storyboard, to count a failed one
+        at_risk = 0.0   # USD this week may already have spent if it fails part-way (counted on failure, live only)
         if not allow_unfinished and not finished(week):
             print(f"{week}: not over yet, skipped", file=out)
             results.append({"week": week, "status": "skipped", "reason": "unfinished"})
@@ -742,20 +771,36 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                 if meta.get("status") != "partial":
                     results.append({"week": week, "status": "skipped", "reason": f"status {meta.get('status')}"})
                     continue
-                est = meta.get("cost_estimate") or 0
+                # the failed shots only, not the whole episode's estimate
+                est = retry_estimate_usd(week, media, meta) if live else 0.0
                 if live and spent + est > budget_usd:
                     print(f"{week}: budget stop (spent ${spent:.2f} of ${budget_usd:.2f})", file=out)
                     results.append({"week": week, "status": "budget_stop"})
                     break
+                at_risk = float(est)
                 m = retry_week(week, media, router, max_cost=budget_usd - spent if live else None)
             else:
                 if not plan_only and not force and meta.get("status") == "done":
                     print(f"{week}: done, skipped", file=out)
                     results.append({"week": week, "status": "skipped", "reason": "done"})
                     continue
+                picks = None
+                if live and not plan_only:
+                    # check the budget BEFORE the paid writer call: the plan-only template has the same shape and
+                    # shot count, and its total is the render estimate plus the writer call
+                    picks, _ = headlines(week, media, refresh=refresh, use_google=use_google, use_viral=use_viral)
+                    need = estimate_usd(make_storyboard(week, picks, minutes, mock=True), quality, media)["total_usd"]
+                    if spent + need > budget_usd:
+                        print(f"{week}: budget stop before the writer (spent ${spent:.2f}, this week about "
+                              f"${need:.2f}, budget ${budget_usd:.2f})", file=out)
+                        results.append({"week": week, "status": "budget_stop"})
+                        _ledger(media, {"week": week, "action": "budget_stop", "spent": round(spent, 2)})
+                        break
+                    writer0 = writer.paid_calls()
                 # plan-only never calls the writer: the template storyboard has the same shape and shot count
                 plan = plan_week(week, media, minutes, quality, mock=plan_only or not live, refresh=refresh,
-                                 use_google=use_google, use_viral=use_viral)
+                                 use_google=use_google, use_viral=use_viral, picks=picks)
+                writer_usd = _writer_spend(writer, writer0)
                 print_plan(plan, out)
                 if plan_only:
                     results.append({"week": week, "status": "planned", "estimate": plan["estimate"]["total_usd"]})
@@ -763,17 +808,19 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                                     "headlines": [p["headline"] for p in plan["picks"]]})
                     continue
                 est = plan["estimate"]["total_usd"]
-                if live and spent + est > budget_usd:
+                if live and spent + est > budget_usd:   # the written storyboard came out longer than the template
+                    spent += writer_usd                  # the writer call is already spent
                     print(f"{week}: budget stop (spent ${spent:.2f}, this week ${est:.2f}, budget ${budget_usd:.2f})",
                           file=out)
                     results.append({"week": week, "status": "budget_stop"})
                     _ledger(media, {"week": week, "action": "budget_stop", "spent": round(spent, 2)})
                     break
+                at_risk = float(est)
                 m = render_week(week, media, router, minutes, quality,
                                 max_cost=(budget_usd - spent) if live else None, plan=plan)
             # the budget counts USD estimates: the Router's X-Comfy-Credits-Used header is in credits, not dollars
             # (it is recorded in meta.json and the ledger as credits_used)
-            cost = (m.get("cost_estimate") or 0) if live else 0
+            cost = (est if retry else (m.get("cost_estimate") or 0)) if live else 0
             spent += float(cost or 0)
             print(f"{week}: {m['status']} {m.get('duration')} s, {m.get('failed_shots', 0)} failed shots, "
                   f"{(m.get('files') or {}).get('mp4')}", file=out)
@@ -783,10 +830,17 @@ def run(weeks: list[str], media: Path, router=None, minutes: float = 1.0, qualit
                             "cost_estimate": m.get("cost_estimate"), "credits_used": m.get("credits_used"),
                             "spent_total": round(spent, 2)})
         except Exception as e:  # noqa: BLE001 - one bad week never stops the batch
+            # a render that failed part-way has spent part of its estimate: count all of it, so the budget holds
+            # (credits_used is in credits, not dollars). A cost-cap refusal happens before any spend.
+            cost = at_risk if live and not isinstance(e, rs.CostCapExceeded) else 0.0
+            if live and not at_risk:             # failed while writing the storyboard: count the billed writer calls
+                cost = _writer_spend(writer, writer0)
+            spent += cost
             print(f"{week}: FAILED {type(e).__name__}: {e}"[:300], file=out)
-            results.append({"week": week, "status": "failed", "error": f"{type(e).__name__}: {e}"[:300]})
+            results.append({"week": week, "status": "failed", "error": f"{type(e).__name__}: {e}"[:300], "cost": cost})
             _ledger(media, {"week": week, "action": "retry" if retry else ("plan" if plan_only else "render"),
-                            "status": "failed", "error": f"{type(e).__name__}: {e}"[:300]})
+                            "status": "failed", "error": f"{type(e).__name__}: {e}"[:300], "cost_counted": cost,
+                            "spent_total": round(spent, 2)})
     published = publish(media, weeks) if do_publish else []
     if published:
         print(f"published: {', '.join(published)}", file=out)

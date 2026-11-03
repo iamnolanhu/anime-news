@@ -221,13 +221,10 @@ def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
         if candidates and not clip_segs and stills:
             # nothing passes: the scene opens on its stills (always sharp); the smeared clip stays gated
             log.warning("scene %d: no clip window passes the sharpness gate; using stills only", si)
-        elif candidates and not clip_segs:   # no stills either: a scene must show something, say so
-            sh, s = max(candidates, key=lambda x: x[0])
-            gated[:] = [g for g in gated if not (g["src"] == s.src and g["start"] == round(s.start, 2))]
-            clip_segs.append((sh, s))
-            s.extra["gate_exception"] = True
-            log.warning("scene %d: no clip window passes the sharpness gate and no stills; opening on "
-                        "the sharpest anyway (%s @ %.2fs, sharpness %.0f)", si, Path(s.src).name, s.start, sh)
+        elif candidates and not clip_segs:
+            # absolute gate (Nolan 2026-11-02): no window passes and no stills -> the scene is skipped, never a smeared opener
+            log.warning("scene %d: no clip window passes the sharpness gate and no stills; scene skipped", si)
+            continue
         if not clip_segs and not stills:
             continue
         # the sharpest gate-passing window opens the scene; the rest round-robin across the clips

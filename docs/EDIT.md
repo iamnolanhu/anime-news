@@ -110,4 +110,4 @@ re-running does not spend credits again. The default voice is `21m00Tcm4TlvDq8ik
 openapi example; `SHOT_DIRECTOR_VOICE` overrides it.
 
 
-**Gate exception (explicit):** a scene whose clip windows all fail the sharpness gate opens on its stills and the smeared clip is dropped. Only a scene with no stills at all keeps its sharpest window, marked `gate_exception: true` in the cuts JSON and logged as a warning, because a scene must show something.
+**Gate exception (explicit):** a scene whose clip windows all fail the sharpness gate opens on its stills and the smeared clip is dropped. A scene with no stills whose windows all fail is skipped entirely (logged); in the episode pipeline every scene carries its start frame as a still, so this only drops scenes in hand-built plans. The gate is absolute: no smeared opener ever ships.

@@ -50,8 +50,6 @@ SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (s
 SCENE_CUT = 0.25           # ffmpeg scene score of a clip's internal hard cut (a Seedance "Hard cut to:" second angle)
 ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never shown
 MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
-TALK_WIN = (1.6, 3.0)      # a talk take is shown nearly whole, in 2-3 abutting windows of this length
-TALK_PUNCH = 1.3           # punch-in crop on alternate talk windows
 COUNTDOWN_RED = "0xFF2A2A"
 BED_VOLUME = 0.8
 FONT_CANDIDATES = [
@@ -139,6 +137,7 @@ class Source:
         n = self.W * self.H
         self.frames = [raw[i:i + n] for i in range(0, len(raw) - n + 1, n)]
         self._sharp: dict[int, float] = {}
+        self._gates: dict[tuple[float, float], float] = {}
         self.motion = [0.0] + [sum(abs(a[k] - b[k]) for k in range(0, n, 4)) / (n / 4)
                                for a, b in zip(self.frames, self.frames[1:])]
         self.cuts = detect_cuts(path, self.dur)
@@ -171,6 +170,15 @@ class Source:
         i = self.index(t)
         part = self.motion[i + 1:i + 1 + n]
         return sum(part) / len(part) if part else 0.0
+
+    def gate_at(self, t: float) -> float:
+        """The sharpness gate of the angle holding `t`: each angle is its own shot (a soft close-up next to a sharp
+        wide), so the bar is SHARP_GATE x that angle's median (10 samples), never below SHARP_FLOOR."""
+        a, b = next(((a, b) for a, b in self.angles() if a - 1e-6 <= t <= b + 1e-6), (0.0, self.dur))
+        if (a, b) not in self._gates:
+            ts = sorted(self.sharp(a + (b - a) * (0.05 + 0.9 * i / 9)) for i in range(10))
+            self._gates[(a, b)] = max(SHARP_GATE * ts[len(ts) // 2], SHARP_FLOOR)
+        return self._gates[(a, b)]
 
     def angles(self) -> list[tuple[float, float]]:
         """The continuous spans between internal cuts, each at least ANGLE_MIN_S long. A cut zone (one cut or
@@ -276,15 +284,15 @@ class SourceLedger:
 
 def pick_window(src: Source, a: float, b: float, length: float, fps: int) -> tuple[float, float] | None:
     """The shown window (start, length) of one angle [a, b], never crossing its ends (R4). Start: the earliest one
-    whose window passes the sharpness gate, then within the next 0.5 s the one with the most motion in its first
+    whose window passes the angle's sharpness gate, then within the next 0.5 s the one with the most motion in its first
     frames (cut on motion). A smeared tail shortens the window, never below ANGLE_MIN_S, rather than moving it.
     None when no window of the angle passes the gate."""
-    step = 1 / fps
+    step, gate = 1 / fps, src.gate_at(a)
 
     def fit(t: float) -> float:
         n = int(min(length, b - t) * fps + 1e-6)
         while n / fps >= ANGLE_MIN_S - 1e-6:
-            if src.seg_sharp(t, n / fps) >= src.gate:
+            if src.seg_sharp(t, n / fps) >= gate:
                 return n / fps
             n -= 1
         return 0.0
@@ -317,52 +325,23 @@ def _still_items(scene: dict, abs_path, resolve) -> list[tuple[str, str | None]]
     return out
 
 
-def _talk_cuts(total: int, line: str, fps: int) -> list[int]:
-    """Frame counts of the 2-3 abutting windows of a talk take (`total` frames). Cuts fall on a clause
-    boundary of the line (mapped by word count) when one lies within 0.6 s of the even split and keeps every
-    window inside TALK_WIN; otherwise on the even split."""
-    length = total / fps
-    if length < 2 * TALK_WIN[0]:
-        return [total]
-    k = min(3, max(2, math.ceil(length / TALK_WIN[1])))
-    words = [len(c.split()) for c in split_clauses(line)] if line else []
-    marks = [length * sum(words[:i]) / max(1, sum(words)) for i in range(1, len(words))]
-    bounds = [0]
-    for j in range(1, k):
-        ideal, prev = length * j / k, bounds[-1] / fps
-        lo = max(prev + TALK_WIN[0], length - TALK_WIN[1] * (k - j))
-        hi = min(prev + TALK_WIN[1], length - TALK_WIN[0] * (k - j))
-        ok = [m for m in marks if lo <= m <= hi and abs(m - ideal) <= 0.6]
-        bounds.append(round((min(ok, key=lambda m: abs(m - ideal)) if ok else ideal) * fps))
-    bounds.append(total)
-    return [b - a for a, b in zip(bounds, bounds[1:])]
-
-
 def _talk_segments(clip: str, dur: float, line: str, fps: int, si: int) -> list[Seg]:
-    """A talk take, nearly whole (0.15 s to the end - 0.1 s), as abutting windows: wide, punch-in, wide.
-    Captions are the line's clauses timed by word count across the take, as cues per window."""
+    """A talk take holds (R11): one framing, nearly whole (0.15 s to the end - 0.1 s), never punched into after
+    the fact (PsyopAnime: camera moves are baked into the clip). The line's clauses are captioned for their
+    word-count share of the take."""
     a0 = 0.15
     total = int((dur - 0.1 - a0) * fps + 1e-6)
-    segs, f0 = [], 0
-    for j, n in enumerate(_talk_cuts(total, line, fps)):
-        s = Seg("clip", n, src=clip, start=a0 + f0 / fps, scene=si, motion="talk_punch" if j % 2 else "")
-        s.extra.update(src_dur=n / fps, talk=True)
-        segs.append(s)
-        f0 += n
+    s = Seg("clip", total, src=clip, start=a0, scene=si)
+    s.extra.update(src_dur=total / fps, talk=True)
     clauses = split_clauses(line) if line else []
     words = [max(1, len(c.split())) for c in clauses]
-    span, acc, cues = f0 / fps, 0, []
+    span, acc, cues = total / fps, 0, []
     for c, w in zip(clauses, words):
-        cues.append((c, span * acc / sum(words), span * (acc + w) / sum(words)))
+        cues.append((c, round(span * acc / sum(words), 3), round(span * (acc + w) / sum(words), 3)))
         acc += w
-    off = 0.0
-    for s in segs:
-        d = s.frames / fps
-        s.extra["cues"] = [(c, round(max(0.0, a - off), 3), round(min(d, b - off), 3))
-                           for c, a, b in cues if b > off + 1e-6 and a < off + d - 1e-6]
-        s.caption = s.extra["cues"][0][0] if s.extra["cues"] else ""
-        off += d
-    return segs
+    s.extra["cues"] = cues
+    s.caption = cues[0][0] if cues else ""
+    return [s]
 
 
 def plan_segments(plan: dict, workdir: Path, base: Path) -> list[Seg]:
@@ -680,9 +659,6 @@ def render_segment(s: Seg, idx: int, plan: dict, workdir: Path, font: str) -> Pa
         vf = f"{fit},setpts={s.speed}*(PTS-STARTPTS),fps={fps}"
         if s.motion == "punch":   # quick push-in on the opener
             vf += f",zoompan=z='min(1+0.006*on,1.18)':d=1:x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':s={W}x{H}:fps={fps}"
-        elif s.motion == "talk_punch":   # tighter framing on the speaker: centred, upper third (the face)
-            vf += (f",scale=trunc(iw*{TALK_PUNCH}/2)*2:trunc(ih*{TALK_PUNCH}/2)*2"
-                   f",crop={W}:{H}:'(iw-ow)/2':'max(0,min(ih-oh,ih/3-oh/2))'")
         cmd = ["ffmpeg", "-y", "-v", "error", "-ss", f"{s.start:.3f}", "-t", f"{src_dur + 0.25:.3f}",
                "-i", s.src, "-vf", vf + cap + ",tpad=stop_mode=clone:stop_duration=1"] + enc
     elif s.kind == "still":

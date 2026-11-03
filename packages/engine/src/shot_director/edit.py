@@ -51,6 +51,7 @@ TALK_HOLD_TARGET = 2.5     # ... aiming at this (PsyopAnime talk shots hold 2-3 
 SHARP_GATE = 0.4           # skip clip windows whose sharpness < 40 % of the angle's median
 SHARP_FLOOR = 250.0        # and never below this absolute Laplacian variance (smeared frames measured 70-780, sharp 1800+)
 SCENE_CUT = 0.25           # ffmpeg scene score of a clip's internal hard cut (a Seedance "Hard cut to:" second angle)
+SCENE_SPIKE = 0.20         # ... or a score spike this high, 1.6x the frame before it
 ANGLE_MIN_S = 0.5          # a piece of an angle shorter than 12 frames is never shown
 MOTION_FRAMES = 12         # motion energy of a window = mean frame difference over its first 12 frames
 COUNTDOWN_RED = "0xFF2A2A"
@@ -207,13 +208,21 @@ def source(path: str) -> Source:
 
 
 def detect_cuts(path: str, dur: float) -> list[tuple[float, float]]:
-    """Internal hard cuts of a clip: frames whose ffmpeg scene score exceeds SCENE_CUT, ignoring the first and
-    last 0.2 s (encoder artefacts); changes closer than 0.3 s are one cut zone (first, last)."""
-    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vf", f"select='gt(scene,{SCENE_CUT})',showinfo",
-                        "-an", "-f", "null", "-"], capture_output=True, text=True)
+    """Internal hard cuts of a clip, from ffmpeg's per-frame scene score: a frame scoring over SCENE_CUT, or a spike
+    of at least SCENE_SPIKE that is 1.6x the frame before it (the PsyopAnime cut log's rule; it catches a cut that
+    scores 0.246 after a still frame, and a camera move's ramp of 0.1-0.2 is not one). The first and last 0.2 s
+    are ignored (encoder artefacts); changes closer than 0.3 s are one cut zone (first, last)."""
+    p = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vf",
+                        "select='gte(scene,0)',metadata=print:key=lavfi.scene_score", "-an", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    ts = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", p.stderr)]
+    scores = [float(x) for x in re.findall(r"lavfi\.scene_score=([0-9.]+)", p.stderr)]
     zones: list[list[float]] = []
-    for t in sorted(float(m) for m in re.findall(r"pts_time:([0-9.]+)", p.stderr)):
-        if t < 0.2 or t > dur - 0.2:
+    prev = 0.0
+    for t, v in zip(ts, scores):
+        cut = v > SCENE_CUT or (v >= SCENE_SPIKE and v >= 1.6 * prev)
+        prev = v
+        if not cut or t < 0.2 or t > dur - 0.2:
             continue
         if zones and t - zones[-1][1] < 0.3:
             zones[-1][1] = t

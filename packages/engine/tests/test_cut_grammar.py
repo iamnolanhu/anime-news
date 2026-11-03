@@ -254,3 +254,32 @@ def test_weekly_segment_scenes_carry_their_headline():
               "clip": None, "error": None} for sc in sb["scenes"] for s in sc["shots"]]
     plan = R.edit_plan(sb, shots, Path("/m"))
     assert [x.get("headline") for x in plan["scenes"]] == [None, "Robots learn to nap"]
+
+
+def test_a_line_longer_than_its_pictures_is_never_cut_off(media, tmp_path):
+    """R13 when the run cannot grow enough: the run's last still holds as long as it takes; with no still, the last
+    shot freezes on its last frame until the line ends plus 0.2 s. The voice is never trimmed."""
+    _ff("-f", "lavfi", "-i", "sine=f=300:d=9:sample_rate=48000", str(tmp_path / "long9.wav"))
+    _ff("-f", "lavfi", "-i", "sine=f=300:d=7:sample_rate=48000", str(tmp_path / "long7.wav"))
+    plan = {"fps": FPS, "size": [320, 180], "scenes": [
+        {"beat": "setup", "narration": "One long line.", "narration_audio": str(tmp_path / "long9.wav"),
+         "shots": [{"kind": "still", "path": str(media / "still1.png")}]},
+        {"beat": "turn", "narration": "Another long line.", "narration_audio": str(tmp_path / "long7.wav"),
+         "shots": [{"kind": "action", "clip": str(media / "k.mp4")}]}]}
+    segs = edit.plan_segments(plan, tmp_path, media)
+    report = json.loads(json.dumps(edit.cut_report(plan, segs, edit.plan_segments.voice, [])))
+    assert [abs(v["played"] - v["file_dur"]) < 0.05 for v in report["voice"]] == [True, True]
+    for v in report["voice"]:   # each line ends, plus 0.2 s, inside its own scene's pictures
+        sc = next(x["scene"] for x in _shots(report) if x["at"] <= v["at"] < x["at"] + x["frames"] / FPS)
+        scene_end = max(x["at"] + x["frames"] / FPS for x in _shots(report) if x["scene"] == sc)
+        assert scene_end >= v["at"] + v["file_dur"] + 0.2 - 1e-3, v
+    still = next(s for s in _shots(report) if s["scene"] == 0)
+    assert still["frames"] / FPS > edit.STILL_MAX                         # the still held past its usual cap
+    last = [s for s in _shots(report) if s["scene"] == 1][-1]
+    assert last["extra"]["freeze"] > 0 and last["extra"]["src_dur"] < last["frames"] / FPS   # the last frame holds
+    assert report["reuse"]["overlapping_windows"] == 0 and metrics(report)["straddle"] == 0
+    out = edit.assemble({**plan, "scenes": plan["scenes"][1:]}, tmp_path / "freeze.mp4", audio=True, base=media)
+    rep = json.loads(Path(str(out) + ".cuts.json").read_text())
+    got = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
+                               capture_output=True, text=True).stdout)
+    assert abs(got - rep["duration"]) < 0.1 and rep["voice"][0]["played"] == rep["voice"][0]["file_dur"]

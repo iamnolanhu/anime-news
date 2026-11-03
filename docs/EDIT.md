@@ -47,8 +47,8 @@ with `"at": null` plays on every storyboard scene change and on the end card.
 
 ## Cutting rules
 
-0. **Every source moment is on screen at most once.** Each clip angle is shown once, each still once, and no freeze
-   frames are taken from clips. `cuts.json` `reuse` recounts it from the final timeline: `overlapping_windows` and
+0. **Every source moment is on screen at most once.** Each clip angle is shown once and each still once. The only
+   held frame is rule 8's last resort. `cuts.json` `reuse` recounts it from the final timeline: `overlapping_windows` and
    `still_repeats` must be 0.
 1. **A clip is cut by its angles, never across one (R4).** Seedance action clips carry a hidden "Hard cut to:"
    second angle. Each clip is decoded once at 160x90; a frame whose ffmpeg scene score is over 0.25, or a spike of at
@@ -77,8 +77,10 @@ with `"at": null` plays on every storyboard scene change and on the end card.
    sound within 0.5 s (ffmpeg silencedetect, -32 dB for 0.12 s). A J-cut's voice starts on a cut of the previous run,
    and no cut falls in a line's first 0.8 s. The take's sound always plays whole.
 8. **Lines are never cut off (R13).** A scene's narration plays in full over its first run of pictures; the run
-   grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s.
-   A narration that still does not fit is logged, and `voice` shows `played` shorter than `file_dur`.
+   grows to fit it: every shot up to 2.5 s first, then clip windows to their angle's end, then stills up to 6 s. When
+   that is still too short, the run's last still holds as long as it takes, or, with no still, its last shot holds its
+   last frame (`extra.freeze`), until the line ends plus 0.2 s. A voice is never trimmed: `voice` `played` always
+   equals `file_dur`. Free-standing `narration` lines also play in full.
 9. **Sharpness gate.** For every candidate window, the first, middle and last frames are scored (Laplacian
    variance of the 160x90 grayscale frame, pure Python). A window must reach 40 % of its angle's median (10
    samples; each angle is its own shot, so a soft close-up is not judged against a sharp wide) and never less than

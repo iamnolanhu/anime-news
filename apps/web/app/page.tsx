@@ -48,40 +48,41 @@ export default function Home() {
         </div>
       </div>
 
-      <section className="mx-auto grid max-w-[1240px] gap-10 px-4 pb-16 pt-10 sm:px-6 lg:grid-cols-12 lg:gap-12 lg:pt-16">
-        <div className="lg:col-span-5 lg:pt-4">
-          <p className="kicker">Open-source anime news studio</p>
-          <h1 className="display mt-5 text-[clamp(3.2rem,8.5vw,6.6rem)] text-white">
-            A headline in.
-            <span className="block text-gold [text-shadow:0_0_28px_rgba(245,197,24,.25)]">An anime news episode out.</span>
-          </h1>
-          <div className="rule-gold mt-8 w-24" />
-          <p className="mt-6 max-w-[34rem] text-[16px] leading-relaxed text-white/80">
-            Anime News writes the storyboard, renders a start frame and a Seedance shot for every beat through Comfy Router, and cuts
-            it like a late-night briefing. It runs on your machine with your own Comfy API key.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link href="/studio" className="btn-gold">
-              Open the Studio
-            </Link>
-            <Link href="/episodes" className="btn-ghost px-4 py-3">
-              Watch the episodes
-            </Link>
-            <a href={REPO_URL} target="_blank" rel="noreferrer" className="btn-ghost px-4 py-3">
-              Source on GitHub
-            </a>
-          </div>
-        </div>
-
-        <div className="lg:col-span-7">
-          <div className="panel brackets p-2">
-            <HeroPlayer src={latest.video} poster={latest.poster} title={latest.title} />
-          </div>
-          <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <p className="meta">
-              <span className="text-gold">Now showing</span> / {latest.title} / {formatDuration(latest.duration)} / {latest.shots} shots / 0 reused
+      <section className="mx-auto max-w-[1240px] px-4 pb-16 pt-10 sm:px-6 lg:pt-14">
+        <p className="kicker">Open-source anime news studio</p>
+        <h1 className="display mt-5 text-[clamp(3rem,6.6vw,6.4rem)] text-white">
+          A headline in.
+          <span className="block text-gold [text-shadow:0_0_28px_rgba(245,197,24,.25)]">An anime news episode out.</span>
+        </h1>
+        <div className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
+          <div className="min-w-0 lg:col-span-4">
+            <div className="rule-gold w-24" />
+            <p className="mt-6 text-[16px] leading-relaxed text-white/80">
+              Anime News writes the storyboard, renders a start frame and a Seedance shot for every beat through Comfy Router, and cuts
+              it like a late-night briefing. It runs on your machine with your own Comfy API key.
             </p>
-            <p className="meta truncate">&ldquo;{latest.headline}&rdquo;</p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link href="/studio" className="btn-gold">
+                Open the Studio
+              </Link>
+              <Link href="/episodes" className="btn-ghost px-4 py-3">
+                Watch the episodes
+              </Link>
+              <a href={REPO_URL} target="_blank" rel="noreferrer" className="btn-ghost px-4 py-3">
+                Source on GitHub
+              </a>
+            </div>
+          </div>
+          <div className="min-w-0 lg:col-span-8">
+            <div className="panel brackets p-2">
+              <HeroPlayer src={latest.video} poster={latest.poster} title={latest.title} />
+            </div>
+            <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <p className="meta">
+                <span className="text-gold">Now showing</span> / {latest.title} / {formatDuration(latest.duration)} / {latest.shots} shots / 0 reused
+              </p>
+              <p className="meta min-w-0 max-w-full truncate">&ldquo;{latest.headline}&rdquo;</p>
+            </div>
           </div>
         </div>
       </section>
@@ -122,8 +123,8 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="mx-auto grid max-w-[1240px] gap-8 px-4 pt-20 sm:px-6 lg:grid-cols-12" aria-labelledby="run">
-        <div className="lg:col-span-7">
+      <section className="mx-auto grid max-w-[1240px] gap-8 px-4 pt-20 sm:px-6 grid-cols-1 lg:grid-cols-12" aria-labelledby="run">
+        <div className="min-w-0 lg:col-span-7">
           <p className="kicker">Run it yourself</p>
           <h2 id="run" className="display mt-3 text-[clamp(2.4rem,5vw,3.8rem)]">Three commands</h2>
           <ol className="mt-6 space-y-4">
@@ -164,7 +165,7 @@ export default function Home() {
             <Link key={e.slug} href={`/episodes#${e.slug}`} className="group block">
               <div className="relative aspect-video overflow-hidden border border-white/10 transition-[border-color] duration-150 group-hover:border-gold">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={e.poster} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <img src={e.poster} alt="" className="h-full w-full object-cover" />
                 <span className="absolute bottom-2 right-2 bg-black/80 px-1.5 py-0.5 font-mono text-[11px] text-white">{formatDuration(e.duration)}</span>
               </div>
               <p className="display mt-3 text-[1.5rem] group-hover:text-gold">{e.title}</p>

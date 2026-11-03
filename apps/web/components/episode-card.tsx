@@ -12,8 +12,8 @@ export function EpisodeCard({ episode, index }: { episode: Episode; index: numbe
   const file = src.split("/").pop() ?? "episode.mp4";
 
   return (
-    <article id={episode.slug} className="grid scroll-mt-24 gap-6 border-t border-white/10 pt-8 lg:grid-cols-12 lg:gap-10">
-      <div className="lg:col-span-4">
+    <article id={episode.slug} className="grid scroll-mt-24 gap-6 border-t border-white/10 pt-8 grid-cols-1 lg:grid-cols-12 lg:gap-10">
+      <div className="min-w-0 lg:col-span-4">
         <p className="kicker">
           Episode {String(index).padStart(2, "0")} / {episode.date}
         </p>
@@ -48,7 +48,7 @@ export function EpisodeCard({ episode, index }: { episode: Episode; index: numbe
           </a>
         </div>
       </div>
-      <div className="lg:col-span-8">
+      <div className="min-w-0 lg:col-span-8">
         <div className={`panel brackets mx-auto p-2 ${vertical ? "max-w-[360px]" : ""}`}>
           <video
             key={src}

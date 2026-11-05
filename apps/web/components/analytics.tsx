@@ -41,6 +41,12 @@ export function Analytics() {
       };
       tagMode();
       window.addEventListener("storage", tagMode);
+      // House self-traffic marker: open the site once with #me in the URL and this browser is
+      // flagged is_internal=true for good, so the traffic reports can leave our own visits out.
+      if (window.location.hash === "#me" || window.localStorage.getItem("ph_int")) {
+        window.localStorage.setItem("ph_int", "1");
+        posthog.setPersonProperties({ is_internal: true });
+      }
       attachPostHog(posthog);
     });
   }, []);
